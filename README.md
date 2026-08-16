@@ -44,7 +44,7 @@ Build configuration that matters: `--flavour=quick+native_bignum` (no GMP on iOS
 
 Prebuilt: [Release v42](https://github.com/Novavero-AI/ghc-ios/releases/tag/v42) is the packaged toolchain from the green from-scratch run - download the tarball and unpack it to `~/ghc-ios`, or anywhere `$GHC_IOS` points.
 
-From scratch: fork or clone, then manually dispatch **Build GHC Cross Compiler (iOS)** under Actions. The workflow downloads `ghc-9.8.4-src`, patches it, builds with Hadrian on `macos-latest` (roughly an hour end to end), verifies, and uploads the toolchain as an artifact. Unpack to `~/ghc-ios` or set `$GHC_IOS`. (The repo checkout and the installed toolchain are different things that share a default name - if you cloned this repo to `~/ghc-ios` itself, unpack the toolchain elsewhere and point `$GHC_IOS` at it.)
+From scratch: fork or clone, then manually dispatch **Build GHC Cross Compiler (iOS)** under Actions. The workflow downloads `ghc-9.8.4-src`, patches it, builds with Hadrian on `macos-latest` (roughly an hour end to end), verifies, and uploads the toolchain as an artifact (artifacts expire after 30 days; pass the optional `release_tag` dispatch input, e.g. `v43`, to also publish the result as a durable GitHub Release). Unpack to `~/ghc-ios` or set `$GHC_IOS`. (The repo checkout and the installed toolchain are different things that share a default name - if you cloned this repo to `~/ghc-ios` itself, unpack the toolchain elsewhere and point `$GHC_IOS` at it.)
 
 To use the toolchain you also need Xcode with the iOS SDK, Homebrew LLVM (`brew install llvm`), and, if your host GHC comes from GHCup, one run of `./cross-compiler/host-fix-rts-darwin.sh` after each `ghcup install ghc`.
 

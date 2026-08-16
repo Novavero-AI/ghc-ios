@@ -2,6 +2,12 @@ name: Build GHC Cross Compiler (iOS)
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Also publish the toolchain as this Release tag (e.g. v43). Empty = artifact only.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -286,3 +292,48 @@ jobs:
           # Repo retention cap is 30; the durable copy of a green build is
           # its GitHub Release (see v42), not the CI artifact.
           retention-days: 30
+
+  # Publishes THIS run's artifact as a durable Release. Opt-in via the
+  # release_tag dispatch input; the only job with write access. Release
+  # from a from-scratch run for clean provenance - on a cache hit the
+  # tarball is repackaged from the cached toolchain, so the commit named
+  # below is the packaging commit, not necessarily the building one.
+  publish-release:
+    name: Publish Release
+    needs: build-ghc-ios
+    if: ${{ inputs.release_tag != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download toolchain artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ghc-9.8.4-aarch64-apple-ios
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          TARBALL=ghc-9.8.4-aarch64-apple-ios.tar.gz
+          # Must contain the compiler; grep without -q so pipefail does
+          # not trip on grep's early exit.
+          tar tzf "$TARBALL" | grep 'ghc-ios/bin/aarch64-apple-ios-ghc$'
+          SHA256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
+          {
+            echo "GHC 9.8.4 cross-compiler for aarch64-apple-ios."
+            echo
+            echo "Built by run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "Commit: ${GITHUB_SHA}"
+            echo "sha256: ${SHA256}"
+            echo
+            echo 'Unpack to ~/ghc-ios (or point $GHC_IOS at it). Host requirements are in the README.'
+          } > release-notes.md
+          # gh fails if the tag already exists - published releases are
+          # never clobbered.
+          gh release create "$TAG" "$TARBALL" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG - GHC 9.8.4 for aarch64-apple-ios" \
+            --notes-file release-notes.md
