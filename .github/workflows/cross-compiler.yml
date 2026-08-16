@@ -273,4 +273,6 @@ jobs:
         with:
           name: ghc-9.8.4-aarch64-apple-ios
           path: ghc-9.8.4-aarch64-apple-ios.tar.gz
-          retention-days: 90
+          # Repo retention cap is 30; the durable copy of a green build is
+          # its GitHub Release (see v42), not the CI artifact.
+          retention-days: 30
