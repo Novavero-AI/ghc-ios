@@ -25,15 +25,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Cache cross GHC
+      - name: Restore cross GHC cache
         id: cache-ghc
-        uses: actions/cache@v6
+        # Validation runs restore the cache; a release_tag dispatch never
+        # restores, so every Release is built from scratch by its own run
+        # and the patch/source assertions always execute for it. The key
+        # is a pure function of the build inputs (patches + this workflow,
+        # which pins the source checksum and every flag), so it never
+        # needs a manual bump. No restore-keys on purpose: a stale
+        # toolchain must never match.
+        if: ${{ inputs.release_tag == '' }}
+        uses: actions/cache/restore@v6
         with:
           path: ~/ghc-ios
-          # Cold key (bumped for v43): a Release should come from a
-          # from-scratch run, and the hardened assertions only execute
-          # on a cold build.
-          key: ghc-9.8.4-aarch64-apple-ios-v44
+          key: ghc-9.8.4-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
 
       - name: Install boot GHC
         if: steps.cache-ghc.outputs.cache-hit != 'true'
@@ -233,6 +238,17 @@ jobs:
               exit 1
             }
 
+      - name: Save cross GHC cache
+        # Runs whenever this run built the toolchain - including release
+        # runs, which never restore. Saved here, right after Install, so
+        # a later packaging failure cannot cost the hour-long build; the
+        # portability patch below is applied fresh on every run.
+        if: steps.cache-ghc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/ghc-ios
+          key: ghc-9.8.4-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
+
       - name: Patch artifact for portability
         run: |
           # The installed cross-compiler has hardcoded CI runner paths in its
@@ -345,7 +361,10 @@ jobs:
           } > release-notes.md
           # gh fails if the tag already exists - published releases are
           # never clobbered.
+          # --repo is required: this job has no checkout, so gh cannot
+          # infer the repository from a git remote.
           gh release create "$TAG" "$TARBALL" \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TAG - GHC 9.8.4 for aarch64-apple-ios" \
             --notes-file release-notes.md
