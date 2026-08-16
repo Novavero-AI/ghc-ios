@@ -10,7 +10,9 @@ Nobody had documented a working GHC 9.8 iOS cross-compiler build from scratch.
 This log records every failure and fix: the original bootstrap iterations
 (v1-v37), then the maintenance entries that keep the build green on newer
 Xcode images (v38+). Commit hashes in v1-v37 reference nova-kit's private
-tree, where this work originally lived.
+tree, where this work originally lived; from v38 onward every run is in
+this repo's public Actions history, and the whole thing is reproducible
+by dispatching the workflow.
 
 ---
 
@@ -116,8 +118,8 @@ every build attempt. Must patch the tarball itself.
 Result: **Failed** - Hadrian overwrites with fresh tarball extract.
 
 **v23** `a6c9853` - **Patch the tarball directly.** Extract -> sed -> repackage.
-Target: `libffi_cv_as_cfi_pseudo_op`.
-Result: **Failed** - wrong autoconf cache variable name.
+Target: `HAVE_AS_CFI_PSEUDO_OP`.
+Result: **Failed** - that is the C `#define` configure emits, not the cache variable the test consults.
 
 **v24** `e42d460` - Try `libffi_cv_as_cfi_pseudo_op` (autoconf convention).
 Result: **Failed** - still wrong variable name.
@@ -130,7 +132,7 @@ Result: **Passed libffi!** New error: `pthread_setname_np` undeclared.
 
 ---
 
-### Phase 5 - Darwin/iOS Platform Detection (v27-v30)
+### Phase 5 - Darwin/iOS Platform Detection (v27-v31)
 
 iOS is Darwin but GHC doesn't know that for cross targets. RTS code paths
 need Darwin-specific defines and headers, but some Darwin APIs (`mach_vm.h`)
@@ -150,7 +152,7 @@ darwin mach_vm block still compiles.
 
 **v30** `f1fb607` - Use `!defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)` instead.
 Clang built-in when targeting iOS - no includes needed.
-Result: **Failed** - sed matched `#if` (line 17) but missed `#elif` (line 75). Also verify grep was checking old macro name.
+Result: **Failed** - sed matched `#if` (line 17) but missed `#elif` (line 75). The verify grep was also still checking the old macro name.
 
 **v31** `32dab87` - Patch BOTH darwin_HOST_OS guards in ReportMemoryMap.c (`#if` on line 17 and `#elif` on line 75). Fix verify to check for new macro and require 2 matches.
 Result: **Passed ReportMemoryMap.c!** All RTS C files compiled. New error: **linker** - `ld: unknown options: -zorigin`.
@@ -340,10 +342,4 @@ Plus:
 8. Configure: `--target=aarch64-apple-ios`, Homebrew LLVM tools, `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS`
 9. Build: `hadrian/build -j --flavour=quick+native_bignum` with `--flags=-libm --flags=-libdl` and `-L` for libffi
 10. Install: same Hadrian flags as build (Hadrian doesn't persist CLI settings), with SDKROOT and the pre-seeded CXX_STD_LIB_* answers exported for the bindist's host configure (v41/v42)
-11. Verify -> package -> upload artifact
-
-## What's After Green
-
-1. Link Haskell + C shell -> `.ipa` -> pixels on device
-2. Upstream patches to gitlab.haskell.org/ghc/ghc
-3. Cache stage 0 bootstrap separately (or use nova-cache on OCI)
+11. Verify -> package -> upload artifact (a `release_tag` dispatch input additionally publishes it as a GitHub Release)
