@@ -14,14 +14,14 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Cache cross GHC
         id: cache-ghc
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/ghc-ios
-          key: ghc-9.8.4-aarch64-apple-ios-v42
+          key: ghc-9.8.4-aarch64-apple-ios-v43
 
       - name: Install boot GHC
         if: steps.cache-ghc.outputs.cache-hit != 'true'
@@ -269,7 +269,7 @@ jobs:
         run: tar czf ghc-9.8.4-aarch64-apple-ios.tar.gz -C ~ ghc-ios
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ghc-9.8.4-aarch64-apple-ios
           path: ghc-9.8.4-aarch64-apple-ios.tar.gz

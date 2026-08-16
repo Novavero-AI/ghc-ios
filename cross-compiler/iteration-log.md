@@ -321,6 +321,15 @@ began (v38 TLS floor, v39 posix_spawn branch, v40 bindist toolchain,
 v41 disproved sysroot theory, v42 pre-seeded C++ std lib). Toolchain
 published as Release v42.
 
+**v43** - Maintenance, no build change: actions/checkout, cache, and
+upload-artifact bumped to their Node 24 majors (v7/v6/v7) after the
+runner deprecation notices, and artifact retention aligned to the
+repo's 30-day cap (a green build's durable copy is its Release, not
+the CI artifact). Cache key bumped v42 -> v43 deliberately - not for
+correctness, but so the first run after the repo goes public builds
+from scratch instead of serving the v42 cache: the reproducibility
+proof should be cold.
+
 ---
 
 ## Patches (5 total, `cross-compiler/patches/`)
