@@ -39,7 +39,7 @@ alex/happy, configure flags, CC/CXX wrapper scripts.
 
 **v2** `924019b` - Wrong working dirs, missing SDK flags. Fix: proper paths, `--target=aarch64-apple-ios`.
 
-**v3** `5759760` - SDL2 not found, `./boot` fails on pre-booted tarball. Fix: install SDL2, skip boot.
+**v3** `5759760` - SDL2 not found (the early combined CI also built the framework's since-removed desktop SDL2 shell - never a GHC dependency), `./boot` fails on pre-booted tarball. Fix: install SDL2, skip boot.
 
 **v4** `b73c014` - Obsolete `--with-clang` flag rejected. Fix: use `CC=` instead.
 
