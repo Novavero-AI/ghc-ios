@@ -49,7 +49,7 @@ alex/happy, configure flags, CC/CXX wrapper scripts.
 
 **v7** `baa3bb5` - `perf-cross` flavour doesn't exist in GHC 9.8. Fix: use `quick` flavour.
 
-**v8** `4c53e9e` - LD path not set, UI toolkit module structure. Fix: add LD path.
+**v8** `4c53e9e` - LD path not set (the old combined CI also shuffled framework modules here - not GHC work). Fix: add LD path.
 
 ---
 
@@ -189,16 +189,7 @@ Result: **GREEN. ALL STEPS PASSED.** Build (36 min) + Install (25 min) + Verify 
 
 ---
 
-### Phase 7 - Shell Rename (parallel with CI)
-
-**`7437fb2`** - Renamed entire shell layer from `np_` (nova-plat) to `nk_` (nova-kit).
-Files renamed: `np_shell.h/c` -> `nk_shell.h/c`, `np_shell_ios.m` -> `nk_shell_ios.m`, `np_shell_android.c` -> `nk_shell_android.c`.
-All prefixes updated: `NP_` -> `NK_`, `NPEvent` -> `NKEvent`, `np_` -> `nk_`, iOS classes `NPView/NPViewController/NPAppDelegate` -> `NKView/NKViewController/NKAppDelegate`.
-Haskell FFI: `c_np_*` -> `c_nk_*`, event constants `np*` -> `nk*`. Cabal c-sources path updated.
-
----
-
-### Phase 8 - Host GHC Quirks (post-bootstrap, April 2026)
+### Phase 7 - Host GHC Quirks (post-bootstrap, April 2026)
 
 Discovered during a downstream `cabal build` of a consumer app. Every host link on macOS emits:
 
@@ -214,7 +205,7 @@ Discovered during a downstream `cabal build` of a consumer app. Every host link 
 
 ---
 
-### Phase 9 - Public repo bootstrap (v38-v40, August 2026)
+### Phase 8 - Public repo bootstrap (v38-v42, August 2026)
 
 **v38** - First run in the public ghc-ios repo, on a newer runner image
 (Xcode 26.6 / iOS SDK 26.5) than the original green run. Failed in
@@ -335,7 +326,7 @@ published as Release v42.
 
 Plus:
 - libffi tarball repackage (script, not patch file) - `gcc_cv_as_cfi_pseudo_op=no`.
-- `cross-compiler/host-fix-rts-darwin.sh` - host-side post-install fix (see Phase 8).
+- `cross-compiler/host-fix-rts-darwin.sh` - host-side post-install fix (see Phase 7).
 
 ## Current Workflow Steps
 

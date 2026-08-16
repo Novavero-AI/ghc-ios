@@ -13,7 +13,7 @@
 
 Nobody had documented a working GHC 9.8 iOS cross-compiler built from scratch. This repo is that documentation in executable form: dispatch the workflow and it takes GHC 9.8.4 from source tarball to a packaged `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 static libraries.
 
-It powers [nova-kit](https://novavero.ai), our pure-Haskell iOS framework. Full write-up: [Haskell on your iPhone](https://novavero.ai/blog/haskell-on-your-iphone.html). Every failure on the way, with commit hashes: [`cross-compiler/iteration-log.md`](cross-compiler/iteration-log.md).
+It powers [nova-kit](https://novavero.ai), our pure-Haskell iOS framework. Full write-up: [Haskell on your iPhone](https://novavero.ai/blog/haskell-on-your-iphone). Every failure on the way, with commit hashes: [`cross-compiler/iteration-log.md`](cross-compiler/iteration-log.md).
 
 The work here predates this repo: it was done in nova-kit's private tree over the winter of 2025-2026, reaching the first green build (v37) in March 2026, and was extracted here for release. Log entries v38 onward document keeping that build green against newer Xcode runner images.
 
@@ -42,7 +42,9 @@ Build configuration that matters: `--flavour=quick+native_bignum` (no GMP on iOS
 
 ## Building it
 
-Fork or clone, then manually dispatch **Build GHC Cross Compiler (iOS)** under Actions. The workflow downloads `ghc-9.8.4-src`, patches it, builds with Hadrian on `macos-latest` (roughly an hour end to end), verifies, and uploads the toolchain as an artifact. Unpack to `~/ghc-ios` or set `$GHC_IOS`. (The repo checkout and the installed toolchain are different things that share a default name - if you cloned this repo to `~/ghc-ios` itself, unpack the toolchain elsewhere and point `$GHC_IOS` at it.)
+Prebuilt: [Release v42](https://github.com/Novavero-AI/ghc-ios/releases/tag/v42) is the packaged toolchain from the green from-scratch run - download the tarball and unpack it to `~/ghc-ios`, or anywhere `$GHC_IOS` points.
+
+From scratch: fork or clone, then manually dispatch **Build GHC Cross Compiler (iOS)** under Actions. The workflow downloads `ghc-9.8.4-src`, patches it, builds with Hadrian on `macos-latest` (roughly an hour end to end), verifies, and uploads the toolchain as an artifact. Unpack to `~/ghc-ios` or set `$GHC_IOS`. (The repo checkout and the installed toolchain are different things that share a default name - if you cloned this repo to `~/ghc-ios` itself, unpack the toolchain elsewhere and point `$GHC_IOS` at it.)
 
 To use the toolchain you also need Xcode with the iOS SDK, Homebrew LLVM (`brew install llvm`), and, if your host GHC comes from GHCup, one run of `./cross-compiler/host-fix-rts-darwin.sh` after each `ghcup install ghc`.
 

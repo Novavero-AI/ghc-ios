@@ -2,10 +2,6 @@ BSD 3-Clause License
 
 Copyright (c) 2026, Novavero AI Inc.
 
-Portions of the patch files are derived from the Glasgow Haskell Compiler,
-Cabal, and process sources, copyright their respective authors and
-contributors, distributed under BSD-style licenses.
-
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 

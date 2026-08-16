@@ -1,0 +1,4 @@
+Portions of the patch files in cross-compiler/patches/ are derived from
+the Glasgow Haskell Compiler, Cabal, and process sources, copyright
+their respective authors and contributors, distributed under BSD-style
+licenses.

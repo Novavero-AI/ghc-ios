@@ -3,6 +3,9 @@ name: Build GHC Cross Compiler (iOS)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: cross-compiler
   cancel-in-progress: true
