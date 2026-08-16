@@ -34,19 +34,12 @@ jobs:
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
           brew install automake autoconf libtool llvm
-          # Pinned to the exact versions the v42 green run built with -
-          # a floating 'cabal install alex happy' takes whatever is
-          # newest, which is a reproducibility hole and once put a run
-          # in the blast radius of a mirror that had not yet synced a
-          # fresh release. The retry covers genuinely transient network
-          # or mirror failures only.
-          cd /tmp
-          for attempt in 1 2 3; do
-            cabal install alex-3.5.4.2 happy-2.2 --install-method=copy --overwrite-policy=always && break
-            [ "$attempt" = "3" ] && exit 1
-            echo "cabal install failed (attempt $attempt), retrying in 30s"
-            sleep 30
-          done
+          # Pinned to the exact versions the v42 green run built with.
+          # A floating 'cabal install alex happy' takes whatever is
+          # newest - a reproducibility hole, and it once put a run in
+          # the blast radius of a mirror that had not yet synced a
+          # fresh release.
+          cd /tmp && cabal install alex-3.5.4.2 happy-2.2 --install-method=copy --overwrite-policy=always
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
           echo "$HOME/.cabal/bin" >> $GITHUB_PATH
 
