@@ -30,7 +30,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/ghc-ios
-          key: ghc-9.8.4-aarch64-apple-ios-v43
+          # Cold key (bumped for v43): a Release should come from a
+          # from-scratch run, and the hardened assertions only execute
+          # on a cold build.
+          key: ghc-9.8.4-aarch64-apple-ios-v44
 
       - name: Install boot GHC
         if: steps.cache-ghc.outputs.cache-hit != 'true'
@@ -56,6 +59,9 @@ jobs:
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
           curl -L https://downloads.haskell.org/ghc/9.8.4/ghc-9.8.4-src.tar.xz -o /tmp/ghc-src.tar.xz
+          # Pin the source input like everything else (alex/happy versions,
+          # action majors): the value from the official 9.8.4 SHA256SUMS.
+          echo "17e8188f3c8a5c2f73fb4e35d01032e8dc258835ec876d52c8ad8ee3d24b2fc5  /tmp/ghc-src.tar.xz" | shasum -a 256 -c -
           tar xf /tmp/ghc-src.tar.xz -C /tmp
           rm /tmp/ghc-src.tar.xz
 
@@ -85,9 +91,11 @@ jobs:
         run: |
           cd /tmp/ghc-9.8.4
 
-          # LLVM's integrated assembler can't handle arithmetic CFI
-          # expressions or trailing semicolons from C macro expansion
-          # in libffi's aarch64/sysv.S (e.g. .cfi_def_cfa x1, 40;).
+          # Apple's assembler rejects the arithmetic CFI expressions in
+          # libffi's aarch64/sysv.S outright; Homebrew LLVM parses them,
+          # but libffi's CFI path is still broken there (trailing
+          # semicolons from C macro expansion, e.g. .cfi_def_cfa x1, 40;),
+          # so CFI is disabled entirely (log v14-v26).
           #
           # Hadrian extracts libffi from libffi-tarballs/libffi-3.4.6.tar.gz
           # and re-extracts on every build attempt, so we must patch the
@@ -106,8 +114,9 @@ jobs:
             sed -i '' 's/gcc_cv_as_cfi_pseudo_op=yes/gcc_cv_as_cfi_pseudo_op=no/g' {} \;
 
           echo "=== Verify patch ==="
-          find /tmp/libffi-patch -name 'configure' -exec \
-            grep -c 'gcc_cv_as_cfi_pseudo_op=no' {} \;
+          # Hard assertion - find -exec would swallow grep's status.
+          grep -c 'gcc_cv_as_cfi_pseudo_op=no' $(find /tmp/libffi-patch -name 'configure') \
+            || { echo "libffi CFI patch FAILED - cache variable not forced"; exit 1; }
 
           # Re-package the patched tarball
           cd /tmp/libffi-patch
@@ -138,7 +147,7 @@ jobs:
           # patch here is far cheaper than a cryptic link failure
           # 45 minutes into the Hadrian build.
           grep -q '"ios"' hadrian/src/Oracles/Setting.hs || { echo "PATCH 001 FAILED"; exit 1; }
-          find libraries/Cabal -name 'BuildPaths.hs' -exec grep -q 'IOS' {} \; || { echo "PATCH 002 FAILED"; exit 1; }
+          grep -q 'IOS' libraries/Cabal/Cabal/src/Distribution/Simple/BuildPaths.hs || { echo "PATCH 002 FAILED"; exit 1; }
           MATCHES=$(grep -c '__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__' rts/ReportMemoryMap.c)
           if [ "$MATCHES" -ne 2 ]; then echo "PATCH 003 FAILED - expected 2 matches, got $MATCHES"; exit 1; fi
           grep -q 'libraries/Cabal/Cabal' hadrian/cabal.project || { echo "PATCH 004 FAILED"; exit 1; }
@@ -277,9 +286,11 @@ jobs:
 
       - name: Verify
         run: |
-          ls -la ~/ghc-ios/bin/ || echo "No bin dir"
-          ~/ghc-ios/bin/aarch64-apple-ios-ghc --version || echo "No cross GHC found"
-          ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep "Target platform" || true
+          # Hard gate. On a cache-hit run this is the only check that the
+          # cached toolchain is sane before it is repackaged and uploaded.
+          ls -la ~/ghc-ios/bin/
+          ~/ghc-ios/bin/aarch64-apple-ios-ghc --version
+          ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep '("Target platform","aarch64-apple-ios")'
 
       - name: Package
         run: tar czf ghc-9.8.4-aarch64-apple-ios.tar.gz -C ~ ghc-ios
@@ -318,8 +329,9 @@ jobs:
           TAG: ${{ inputs.release_tag }}
         run: |
           TARBALL=ghc-9.8.4-aarch64-apple-ios.tar.gz
-          # Must contain the compiler; grep without -q so pipefail does
-          # not trip on grep's early exit.
+          # Must contain the compiler. grep is the pipeline's last
+          # command, so its status - not tar's - decides the step on a
+          # miss; no -q so the matched path lands in the log.
           tar tzf "$TARBALL" | grep 'ghc-ios/bin/aarch64-apple-ios-ghc$'
           SHA256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
           {
