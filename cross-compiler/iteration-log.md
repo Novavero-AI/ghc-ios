@@ -272,6 +272,23 @@ fails (this failure was undiagnosable from step output alone), and
 assert no /tmp wrapper path survives into the shipped settings file.
 Cache key bumped v39 -> v40.
 
+**v41** - v40's C++ probe failure is gone, but the toolchain export
+broke autoconf cross-detection: the bindist configure receives no
+explicit --host (config.log: host_alias=''), so with CC=/tmp/ios-cc it
+compiled its test program for arm64-ios and tried to RUN it on the
+macOS host - "configure: error: cannot run C compiled programs"
+(exit 77) at "checking whether we are cross compiling". The config.log
+dump added in v40 turned this diagnosis into one grep instead of a
+guess.
+
+Fix: revert the toolchain exports. The bindist configure is a HOST
+configure and always was (v37 ran it that way, green); the only thing
+the Xcode 26 image broke is that bare Homebrew clang++ (llvm 22) has
+no default sysroot, so its C++ std lib probe cannot link
+-lc++/-lc++abi. Export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+so the host toolchain finds the macOS SDK - the v37-green
+configuration, adapted to the new image. Cache key bumped v40 -> v41.
+
 ---
 
 ## Patches (5 total, `cross-compiler/patches/`)

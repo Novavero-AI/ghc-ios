@@ -21,7 +21,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ghc-ios
-          key: ghc-9.8.4-aarch64-apple-ios-v40
+          key: ghc-9.8.4-aarch64-apple-ios-v41
 
       - name: Install boot GHC
         if: steps.cache-ghc.outputs.cache-hit != 'true'
@@ -176,16 +176,17 @@ jobs:
           # persist ANY settings between invocations (flavour, flags, opts).
           #
           # The install rule runs the binary-dist's OWN configure, which
-          # re-detects its toolchain from the environment rather than
-          # inheriting the source tree's configure arguments. Without these
-          # exports it probes the host toolchain (bare Homebrew clang++,
-          # no sysroot) and dies in the C++ std lib linkage check (v40).
-          export CC=/tmp/ios-cc
-          export CXX=/tmp/ios-cxx
-          export LD=$(xcrun --sdk iphoneos -f ld)
-          export AR=$(xcrun --sdk iphoneos -f ar)
-          export RANLIB=$(xcrun --sdk iphoneos -f ranlib)
-          export STRIP=$(xcrun --sdk iphoneos -f strip)
+          # re-detects a HOST toolchain and runs compile-and-execute
+          # probes natively. Do NOT hand it the iOS cross wrappers (v40
+          # tried): with no explicit --host, autoconf compiles a test
+          # program and RUNS it, and an arm64-ios binary cannot execute
+          # on the macOS host ("cannot run C compiled programs"). What
+          # the Xcode 26 image actually broke is narrower: bare Homebrew
+          # clang++ (llvm 22) ships no default sysroot, so the C++ std
+          # lib probe cannot link -lc++/-lc++abi. SDKROOT points the
+          # host toolchain at the macOS SDK - the v37-green
+          # configuration, adapted to the new image (v41).
+          export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 
           hadrian/build install --prefix=$HOME/ghc-ios \
             --flavour=quick+native_bignum \
