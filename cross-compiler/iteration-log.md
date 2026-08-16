@@ -4,13 +4,13 @@
 Target: Build GHC 9.8.4 cross-compiler for `aarch64-apple-ios` on macOS (GitHub Actions).
 Output: A working `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 iOS binaries.
 CI: `.github/workflows/cross-compiler.yml` (manual dispatch, `macos-latest`)
-Timeline: v1-v37 March 2026 (first green 2026-03-07), host-GHC fixes April 2026, v38+ August 2026 against newer Xcode images.
+Timeline: v1-v37 over the winter of 2025-2026 (first green 2026-03-07), host-GHC fixes April 2026, v38+ August 2026 against newer Xcode images.
 
 Nobody had documented a working GHC 9.8 iOS cross-compiler build from scratch.
-This log records every failure and fix: the original bootstrap sprint (v1-v37,
-most of it in a single day), then the maintenance entries that keep the build
-green on newer Xcode images (v38+). Commit hashes in v1-v37 reference
-nova-kit's private tree, where this work originally lived.
+This log records every failure and fix: the original bootstrap iterations
+(v1-v37), then the maintenance entries that keep the build green on newer
+Xcode images (v38+). Commit hashes in v1-v37 reference nova-kit's private
+tree, where this work originally lived.
 
 ---
 

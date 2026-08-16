@@ -110,6 +110,8 @@ jobs:
           #   001 - Hadrian: recognize iOS as Apple platform (linker flags)
           #   002 - Cabal: iOS uses .dylib, not .so (copy step)
           #   003 - RTS: guard mach_vm.h includes for iOS
+          #   004 - Hadrian: build against in-tree Cabal so 002 takes effect
+          #   005 - process: guard posix_spawn addchdir variants for iOS
           for p in $GITHUB_WORKSPACE/cross-compiler/patches/*.patch; do
             echo "=== Applying $(basename $p) ==="
             patch -p1 --fuzz=2 < "$p"
