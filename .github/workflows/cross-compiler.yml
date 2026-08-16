@@ -34,7 +34,15 @@ jobs:
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
           brew install automake autoconf libtool llvm
-          cd /tmp && cabal install alex happy --install-method=copy --overwrite-policy=always
+          # Retry: Hackage mirrors occasionally 404 on fresh releases
+          # (a dream.io mirror flake failed a run this way once).
+          cd /tmp
+          for attempt in 1 2 3; do
+            cabal install alex happy --install-method=copy --overwrite-policy=always && break
+            [ "$attempt" = "3" ] && exit 1
+            echo "cabal install failed (attempt $attempt), retrying in 30s"
+            sleep 30
+          done
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
           echo "$HOME/.cabal/bin" >> $GITHUB_PATH
 
