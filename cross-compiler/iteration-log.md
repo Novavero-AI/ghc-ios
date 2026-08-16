@@ -289,6 +289,26 @@ no default sysroot, so its C++ std lib probe cannot link
 so the host toolchain finds the macOS SDK - the v37-green
 configuration, adapted to the new image. Cache key bumped v40 -> v41.
 
+**v42** - v41 disproved its own hypothesis: with the toolchain exports
+reverted and SDKROOT pointing at the macOS SDK, all three C++ std lib
+probes still failed. The probe section of config.log was cut off by
+the tail -150 dump (fixed this iteration: the dump now greps the
+probe region directly), but the evidence pattern identifies the
+cause: every candidate in the probe list (c++ c++abi / c++ c++abi
+pthread / c++ cxxrt) requires a linkable libc++abi, the Xcode 26
+macOS SDK no longer ships one, and the list has no plain-c++
+fallback - so the probe cannot succeed on this image with any host
+compiler. The iOS SDK still carries libc++abi, which is why the
+source-tree configure's identical probe passes minutes earlier in
+the same run.
+
+Fix: pre-seed the probe's documented escape hatch instead of fighting
+it - export CXX_STD_LIB_LIBS="c++" (with empty LIB_DIRS and
+DYN_LIB_DIRS), which fp_find_cxx_std_lib.m4 honors by skipping
+detection entirely. Plain c++ is the truthful answer on modern
+Darwin, where the ABI library is bundled into libc++. SDKROOT stays
+for the other host probes. Cache key bumped v41 -> v42.
+
 ---
 
 ## Patches (5 total, `cross-compiler/patches/`)
@@ -316,7 +336,7 @@ Plus:
 7. **Apply patches** (`cross-compiler/patches/001-005`) - Hadrian, Cabal, RTS, process fixes via `patch -p1`
 8. Configure: `--target=aarch64-apple-ios`, Homebrew LLVM tools, `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS`
 9. Build: `hadrian/build -j --flavour=quick+native_bignum` with `--flags=-libm --flags=-libdl` and `-L` for libffi
-10. Install: same Hadrian flags as build, with the same CC/CXX toolchain exported for the bindist configure (Hadrian doesn't persist CLI settings, and the bindist configure re-detects tools from the environment)
+10. Install: same Hadrian flags as build (Hadrian doesn't persist CLI settings), with SDKROOT and the pre-seeded CXX_STD_LIB_* answers exported for the bindist's host configure (v41/v42)
 11. Verify -> package -> upload artifact
 
 ## What's After Green

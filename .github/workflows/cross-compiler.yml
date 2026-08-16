@@ -21,7 +21,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ghc-ios
-          key: ghc-9.8.4-aarch64-apple-ios-v41
+          key: ghc-9.8.4-aarch64-apple-ios-v42
 
       - name: Install boot GHC
         if: steps.cache-ghc.outputs.cache-hit != 'true'
@@ -180,13 +180,20 @@ jobs:
           # probes natively. Do NOT hand it the iOS cross wrappers (v40
           # tried): with no explicit --host, autoconf compiles a test
           # program and RUNS it, and an arm64-ios binary cannot execute
-          # on the macOS host ("cannot run C compiled programs"). What
-          # the Xcode 26 image actually broke is narrower: bare Homebrew
-          # clang++ (llvm 22) ships no default sysroot, so the C++ std
-          # lib probe cannot link -lc++/-lc++abi. SDKROOT points the
-          # host toolchain at the macOS SDK - the v37-green
-          # configuration, adapted to the new image (v41).
+          # on the macOS host ("cannot run C compiled programs").
           export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+
+          # The C++ std lib probe (fp_find_cxx_std_lib.m4) only tries
+          # c++abi/cxxrt combinations and has no plain-c++ fallback; the
+          # Xcode 26 macOS SDK no longer ships a linkable libc++abi, so
+          # the probe cannot succeed on this image even with SDKROOT
+          # (v41 proved that; the iOS SDK still has it, which is why the
+          # source-tree configure passes). Pre-seed the documented
+          # escape-hatch variables: modern Darwin bundles the ABI inside
+          # libc++, so plain c++ is the truthful answer (v42).
+          export CXX_STD_LIB_LIBS="c++"
+          export CXX_STD_LIB_LIB_DIRS=""
+          export CXX_STD_LIB_DYN_LIB_DIRS=""
 
           hadrian/build install --prefix=$HOME/ghc-ios \
             --flavour=quick+native_bignum \
@@ -194,8 +201,10 @@ jobs:
             "stage1.rts.cabal.configure.opts += --flags=-libm --flags=-libdl" \
             "stage1.rts.ghc.link.opts += -optl-L_build/stage1/libffi/build/inst/lib" \
             || {
-              echo "=== install failed; dumping bindist config.log ==="
-              find _build/bindist -name config.log -exec tail -150 {} \;
+              echo "=== install failed; bindist config.log probe section ==="
+              find _build/bindist -name config.log -exec grep -n -B 4 -A 40 "linkage against\|std_lib" {} \;
+              echo "=== bindist config.log tail ==="
+              find _build/bindist -name config.log -exec tail -60 {} \;
               exit 1
             }
 
