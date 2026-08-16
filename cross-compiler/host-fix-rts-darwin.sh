@@ -37,8 +37,8 @@
 #    the developer's machine. Idempotent: safe to re-run after every
 #    'ghcup install ghc'.
 #
-# 2. cross-compiler/patches/006-* - TODO when we have a verifiable patch
-#    against rts/rts.cabal.in in the GHC 9.8.4 source tarball. This would
+# 2. cross-compiler/patches/006-* - planned: a verified patch against
+#    rts/rts.cabal.in in the GHC 9.8.4 source tarball. This would
 #    fix the iOS cross-compiler's RTS conf at source-tree level so the
 #    cross-compiler bootstrap in CI also avoids the warning. Not critical:
 #    the iOS link goes through nova-kit's own build pipeline, which uses
@@ -65,9 +65,8 @@ if ! command -v "$GHC_PKG" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Find the global package db directory. 'ghc-pkg list --simple-output rts'
-# prints the rts package id; we then derive the conf file from the global
-# package db location reported by 'ghc-pkg --version' + the standard layout.
+# Find the global package db directory: the first line of
+# 'ghc-pkg --global list' output is the db path (with a trailing colon).
 GHC_LIB_DIR="$($GHC_PKG --global list 2>/dev/null | head -1 | sed 's/:$//')"
 if [ -z "$GHC_LIB_DIR" ] || [ ! -d "$GHC_LIB_DIR" ]; then
     echo "ERROR: could not locate global package db from $GHC_PKG" >&2

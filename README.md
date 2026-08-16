@@ -5,6 +5,7 @@
 
 [![CI](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml/badge.svg)](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml)
 ![GHC](https://img.shields.io/badge/GHC-9.8-purple)
+[![Release](https://img.shields.io/github/v/release/Novavero-AI/ghc-ios)](https://github.com/Novavero-AI/ghc-ios/releases/latest)
 ![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)
 
 </div>
@@ -48,17 +49,26 @@ From scratch: fork or clone, then manually dispatch **Build GHC Cross Compiler (
 
 To use the toolchain you also need Xcode with the iOS SDK, Homebrew LLVM (`brew install llvm`), and, if your host GHC comes from GHCup, one run of `./cross-compiler/host-fix-rts-darwin.sh` after each `ghcup install ghc`.
 
+## Using it
+
+```sh
+~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep "Target platform"   # aarch64-apple-ios
+~/ghc-ios/bin/aarch64-apple-ios-ghc -staticlib -no-hs-main -o libapp.a App.hs
+```
+
+The output is an ARM64 static library: the app embeds it, calls `hs_init`, and reaches Haskell through `foreign export`. `-staticlib -no-hs-main` is the invocation shape nova-kit's build pipeline uses on every build. The final app link also needs the three RTS symbol overrides described under Scope.
+
 ## Scope
 
 This is the compiler-side story. Running the GHC RTS well on a device needs three link-time overrides in the app itself: a no-op `mprotectForLinker` (iOS W^X), a memory-pressure-aware `osReserveHeapMemory` (GHC asks for 256 GB of address space; iOS grants about 1 GB), and `os_log` routing for RTS diagnostics. Those are covered in the write-up and ship as part of nova-kit's platform shell.
 
 ## Prior art
 
-The original `ghc-ios` scripts (GHC 7.x era) proved this was possible before going quiet. reflex-platform shipped iOS cross-compilation for years, pinned to GHC 8.10, and its maintainers [describe that support as bitrotted](https://github.com/obsidiansystems/obelisk/pull/1139#issuecomment-4845448746) today. A [2022 guide on GHC's wiki](https://gitlab.haskell.org/ghc/ghc/-/wikis/Brief-Guide-for-Compiling-GHC-to-iOS) built a GHC 9.2.1 cross-compiler and ran it on a jailbroken iPhone: impressive, single-shot, and never carried forward. The `mac2ios` approach retags macOS Mach-O output as iOS instead of cross-compiling at all. This repo differs by being versioned, CI-reproducible on a stock runner, App-Store-compatible (no jailbreak entitlements), and documented failure by failure.
+The original `ghc-ios` scripts (GHC 7.x era) proved this was possible before going quiet. reflex-platform shipped iOS cross-compilation for years, pinned to GHC 8.10; in the Obelisk v2 discussion that support is [described as bitrotted](https://github.com/obsidiansystems/obelisk/pull/1139#issuecomment-4845448746), with both successor approaches dropping it. A [2022 guide on GHC's wiki](https://gitlab.haskell.org/ghc/ghc/-/wikis/Brief-Guide-for-Compiling-GHC-to-iOS) built a GHC 9.2.1 cross-compiler and ran it on a jailbroken iPhone: impressive, single-shot, and never carried forward. The `mac2ios` approach retags macOS Mach-O output as iOS instead of cross-compiling at all. This repo differs by being versioned, CI-reproducible on a stock runner, App-Store-compatible (no jailbreak entitlements), and documented failure by failure.
 
 ## Upstreaming
 
-Several of these patches are one-line guards that belong in GHC proper, and upstreaming is in progress. If you work on GHC or Hadrian and have opinions about iOS as a target, open an issue.
+Several of these patches are one-line guards that belong in GHC proper; upstreaming is tracked in [#1](https://github.com/Novavero-AI/ghc-ios/issues/1). If you work on GHC or Hadrian and have opinions about iOS as a target, weigh in there or open an issue.
 
 ## License
 
