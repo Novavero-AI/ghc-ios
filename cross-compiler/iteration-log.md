@@ -307,7 +307,10 @@ it - export CXX_STD_LIB_LIBS="c++" (with empty LIB_DIRS and
 DYN_LIB_DIRS), which fp_find_cxx_std_lib.m4 honors by skipping
 detection entirely. Plain c++ is the truthful answer on modern
 Darwin, where the ABI library is bundled into libc++. SDKROOT stays
-for the other host probes. Cache key bumped v41 -> v42.
+for the other host probes. Cache key bumped v41 -> v42. The probe's
+missing plain-c++ candidate is a GHC bug against current Apple SDKs
+(it will bite plain macOS builds on Xcode 26 too) and joins the
+upstreaming queue alongside the patches.
 
 ---
 
