@@ -34,11 +34,15 @@ jobs:
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
           brew install automake autoconf libtool llvm
-          # Retry: Hackage mirrors occasionally 404 on fresh releases
-          # (a dream.io mirror flake failed a run this way once).
+          # Pinned to the exact versions the v42 green run built with -
+          # a floating 'cabal install alex happy' takes whatever is
+          # newest, which is a reproducibility hole and once put a run
+          # in the blast radius of a mirror that had not yet synced a
+          # fresh release. The retry covers genuinely transient network
+          # or mirror failures only.
           cd /tmp
           for attempt in 1 2 3; do
-            cabal install alex happy --install-method=copy --overwrite-policy=always && break
+            cabal install alex-3.5.4.2 happy-2.2 --install-method=copy --overwrite-policy=always && break
             [ "$attempt" = "3" ] && exit 1
             echo "cabal install failed (attempt $attempt), retrying in 30s"
             sleep 30
