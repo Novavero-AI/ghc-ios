@@ -9,7 +9,7 @@ concurrency:
 
 jobs:
   build-ghc-ios:
-    name: GHC 9.8.4 → aarch64-apple-ios
+    name: GHC 9.8.4 -> aarch64-apple-ios
     runs-on: macos-latest
     timeout-minutes: 180
 
@@ -51,7 +51,7 @@ jobs:
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           echo "iOS SDK: $IOS_SDK"
 
-          # Use Homebrew LLVM clang — NOT Apple's Xcode clang.
+          # Use Homebrew LLVM clang - NOT Apple's Xcode clang.
           # Apple's integrated assembler rejects arithmetic in CFI directives
           # (e.g. .cfi_adjust_cfa_offset (8*2 + ...)) which libffi's aarch64
           # assembly requires. Upstream LLVM handles these correctly.
@@ -79,7 +79,7 @@ jobs:
           # and re-extracts on every build attempt, so we must patch the
           # TARBALL itself. We change the configure script to force
           # HAVE_AS_CFI_PSEUDO_OP=no so CFI macros expand to nothing.
-          # Only loses debug stack traces through FFI — irrelevant for us.
+          # Only loses debug stack traces through FFI - irrelevant for us.
           TARBALL=libffi-tarballs/libffi-3.4.6.tar.gz
           echo "=== Patching libffi tarball ==="
           ls -la "$TARBALL"
@@ -107,9 +107,9 @@ jobs:
 
           # Apply unified diff patches from cross-compiler/patches/.
           # These fix GHC's lack of iOS cross-compilation support:
-          #   001 — Hadrian: recognize iOS as Apple platform (linker flags)
-          #   002 — Cabal: iOS uses .dylib, not .so (copy step)
-          #   003 — RTS: guard mach_vm.h includes for iOS
+          #   001 - Hadrian: recognize iOS as Apple platform (linker flags)
+          #   002 - Cabal: iOS uses .dylib, not .so (copy step)
+          #   003 - RTS: guard mach_vm.h includes for iOS
           for p in $GITHUB_WORKSPACE/cross-compiler/patches/*.patch; do
             echo "=== Applying $(basename $p) ==="
             patch -p1 --fuzz=2 < "$p"
@@ -124,7 +124,7 @@ jobs:
           grep -q '"ios"' hadrian/src/Oracles/Setting.hs || { echo "PATCH 001 FAILED"; exit 1; }
           find libraries/Cabal -name 'BuildPaths.hs' -exec grep -q 'IOS' {} \; || { echo "PATCH 002 FAILED"; exit 1; }
           MATCHES=$(grep -c '__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__' rts/ReportMemoryMap.c)
-          if [ "$MATCHES" -ne 2 ]; then echo "PATCH 003 FAILED — expected 2 matches, got $MATCHES"; exit 1; fi
+          if [ "$MATCHES" -ne 2 ]; then echo "PATCH 003 FAILED - expected 2 matches, got $MATCHES"; exit 1; fi
           grep -q 'libraries/Cabal/Cabal' hadrian/cabal.project || { echo "PATCH 004 FAILED"; exit 1; }
           grep -q 'ADDCHDIR_NP.*__ENVIRONMENT_IPHONE' libraries/process/cbits/posix/posix_spawn.c || { echo "PATCH 005 FAILED"; exit 1; }
 
@@ -172,7 +172,7 @@ jobs:
           cd /tmp/ghc-9.8.4
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
-          # Must pass the same flags as the build step — Hadrian doesn't
+          # Must pass the same flags as the build step - Hadrian doesn't
           # persist ANY settings between invocations (flavour, flags, opts).
           #
           # The install rule runs the binary-dist's OWN configure, which
@@ -204,9 +204,9 @@ jobs:
           # wrapper scripts and settings file.  We replace them with portable
           # alternatives so the artifact works on ANY macOS machine:
           #
-          #   ios-cc  — xcrun discovers the iOS SDK at runtime
-          #   ios-ld  — xcrun discovers the linker at runtime
-          #   settings — uses $topdir so paths are relative to the install
+          #   ios-cc  - xcrun discovers the iOS SDK at runtime
+          #   ios-ld  - xcrun discovers the linker at runtime
+          #   settings - uses $topdir so paths are relative to the install
           #
           # Without this step, anyone who downloads the artifact gets:
           #   "No such file or directory: /Users/runner/..."

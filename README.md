@@ -1,12 +1,21 @@
-# ghc-ios
+<div align="center">
+<h1>ghc-ios</h1>
+<p><strong>A GHC 9.8 cross-compiler for aarch64-apple-ios.</strong></p>
+<p>Five patches, one libffi fix, and a CI bootstrap that turn the stock GHC source tarball into an App-Store-compatible Haskell toolchain on a standard macOS runner - with the complete failure-by-failure build log.</p>
 
-[![Build GHC Cross Compiler (iOS)](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml/badge.svg)](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml)
+[![CI](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml/badge.svg)](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml)
+![GHC](https://img.shields.io/badge/GHC-9.8-purple)
+![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)
 
-**A GHC 9.8 cross-compiler for `aarch64-apple-ios`: patches, CI bootstrap, and the complete build log.**
+</div>
 
-Nobody had documented a working GHC 9.8 iOS cross-compiler built from scratch. This repo is that documentation in executable form. The CI workflow takes the stock GHC 9.8.4 source tarball, applies five small patches, fixes one libffi build quirk, and produces an `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 static libraries on a standard macOS runner.
+---
+
+Nobody had documented a working GHC 9.8 iOS cross-compiler built from scratch. This repo is that documentation in executable form: dispatch the workflow and it takes GHC 9.8.4 from source tarball to a packaged `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 static libraries.
 
 It powers [nova-kit](https://novavero.ai), our pure-Haskell iOS framework. Full write-up: [Haskell on your iPhone](https://novavero.ai/blog/haskell-on-your-iphone.html). Every failure on the way, with commit hashes: [`cross-compiler/iteration-log.md`](cross-compiler/iteration-log.md).
+
+The work here predates this repo: it was done in nova-kit's private tree over the winter of 2025-2026, reaching the first green build (v37) in March 2026, and was extracted here for release. Log entries v38 onward document keeping that build green against newer Xcode runner images.
 
 ## Contents
 
@@ -29,7 +38,7 @@ cross-compiler/host-fix-rts-darwin.sh  host-side fix for GHCup's darwin GHC 9.8
 | 6 | Apple's assembler rejects arithmetic in libffi's CFI directives; Hadrian re-extracts the vendored tarball over source patches | Homebrew LLVM clang + repack the tarball with `gcc_cv_as_cfi_pseudo_op=no` | workflow step |
 | 7 | GHCup's host darwin GHC 9.8 ships a redundant `-Wl,-U` flag (warns on Xcode 15+) | idempotent `rts-*.conf` edit | `host-fix-rts-darwin.sh` |
 
-Build configuration that matters: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS` (iOS is Darwin, but GHC doesn't say so for cross targets), and a versioned deployment target (`--target=arm64-apple-ios15.0`) in the stage-1 C flags, without which newer clang rejects the thread-local storage the threaded RTS needs. Hadrian does not persist CLI settings between invocations: the install step needs the same flags and flavour as the build step.
+Build configuration that matters: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS` (iOS is Darwin, but GHC doesn't say so for cross targets), and a versioned deployment target (`--target=arm64-apple-ios15.0`) in the stage-1 C flags, without which newer clang rejects the thread-local storage the threaded RTS needs. Hadrian does not persist CLI settings between invocations: the install step needs the same flags and flavour as the build step, and must export the same CC/CXX toolchain because the binary-dist configure it invokes re-detects its tools from the environment.
 
 ## Building it
 

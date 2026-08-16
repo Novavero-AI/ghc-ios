@@ -27,17 +27,17 @@
 # every consumer app), which makes the SDK look broken when it isn't.
 #
 # This is a known upstream issue. It was fixed in GHC 9.10 by removing the
-# flag from rts/rts.cabal.in, but GHC 9.8.x — which is what the iOS cross
-# compiler is built from — still ships it.
+# flag from rts/rts.cabal.in, but GHC 9.8.x - which is what the iOS cross
+# compiler is built from - still ships it.
 #
 # Two patches needed in total
 # ---------------------------
-# 1. THIS SCRIPT — patches the GHCup-installed *host* GHC's rts conf, since
+# 1. THIS SCRIPT - patches the GHCup-installed *host* GHC's rts conf, since
 #    that is what runs 'cabal build' for every downstream nova-kit app on
 #    the developer's machine. Idempotent: safe to re-run after every
 #    'ghcup install ghc'.
 #
-# 2. cross-compiler/patches/006-* — TODO when we have a verifiable patch
+# 2. cross-compiler/patches/006-* - TODO when we have a verifiable patch
 #    against rts/rts.cabal.in in the GHC 9.8.4 source tarball. This would
 #    fix the iOS cross-compiler's RTS conf at source-tree level so the
 #    cross-compiler bootstrap in CI also avoids the warning. Not critical:
@@ -95,7 +95,7 @@ sed -i '' 's| "-Wl,-U,___darwin_check_fd_set_overflow"||' "$RTS_CONF"
 
 # Verify the edit took.
 if grep -q '"-Wl,-U,___darwin_check_fd_set_overflow"' "$RTS_CONF"; then
-    echo "ERROR: sed edit did not remove the flag — conf format may have changed" >&2
+    echo "ERROR: sed edit did not remove the flag - conf format may have changed" >&2
     exit 1
 fi
 echo "  removed redundant -Wl,-U,___darwin_check_fd_set_overflow"
