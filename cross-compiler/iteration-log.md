@@ -324,7 +324,7 @@ published as Release v42.
 | 002 | `libraries/Cabal/.../BuildPaths.hs` | `dllExtension`: `IOS -> "dylib"` |
 | 003 | `rts/ReportMemoryMap.c` | Guard `mach_vm.h` includes for iOS |
 | 004 | `hadrian/cabal.project` | Use in-tree Cabal so Hadrian gets patch 002 |
-| 005 | `libraries/process/.../posix_spawn.c` | Guard `addchdir_np` for iOS |
+| 005 | `libraries/process/.../posix_spawn.c` | Guard both `addchdir` branches for iOS |
 
 Plus:
 - libffi tarball repackage (script, not patch file) - `gcc_cv_as_cfi_pseudo_op=no`.

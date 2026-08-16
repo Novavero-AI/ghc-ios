@@ -34,7 +34,7 @@ cross-compiler/host-fix-rts-darwin.sh  host-side fix for GHCup's darwin GHC 9.8
 | 2 | Cabal names iOS shared libs `.so` | `dllExtension`: `IOS -> "dylib"` | `patches/002` |
 | 3 | `mach_vm.h` is `#error` on iOS; the usual `TARGET_OS_IPHONE` guard fails silently without its header | guard on `__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__` | `patches/003` |
 | 4 | Hadrian compiles against the boot GHC's Cabal, so fix 2 never takes effect | build Hadrian against in-tree Cabal | `patches/004` |
-| 5 | `posix_spawn` `addchdir_np` is unavailable on iOS | conditional guard | `patches/005` |
+| 5 | `posix_spawn`'s `addchdir` file actions are unavailable on iOS (newer SDKs declare the non-`_np` variant too) | guard both branches | `patches/005` |
 | 6 | Apple's assembler rejects arithmetic in libffi's CFI directives; Hadrian re-extracts the vendored tarball over source patches | Homebrew LLVM clang + repack the tarball with `gcc_cv_as_cfi_pseudo_op=no` | workflow step |
 | 7 | GHCup's host darwin GHC 9.8 ships a redundant `-Wl,-U` flag (warns on Xcode 15+) | idempotent `rts-*.conf` edit | `host-fix-rts-darwin.sh` |
 
