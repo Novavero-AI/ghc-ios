@@ -1,0 +1,18 @@
+--- a/libraries/process/cbits/posix/posix_spawn.c
++++ b/libraries/process/cbits/posix/posix_spawn.c
+@@ -137,13 +137,13 @@
+     }
+ 
+     if (workingDirectory) {
+-#if defined(HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR)
++#if defined(HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR) && !defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
+         r = posix_spawn_file_actions_addchdir(&fa, workingDirectory);
+         if (r != 0) {
+             *failed_doing = "posix_spawn_file_actions_addchdir";
+             goto fail;
+         }
+-#elif defined(HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP)
++#elif defined(HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP) && !defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
+         // N.B. this function is broken on macOS.
+         // See https://github.com/rust-lang/rust/pull/80537.
+         r = posix_spawn_file_actions_addchdir_np(&fa, workingDirectory);

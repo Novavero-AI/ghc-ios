@@ -1,0 +1,10 @@
+--- a/libraries/Cabal/Cabal/src/Distribution/Simple/BuildPaths.hs
++++ b/libraries/Cabal/Cabal/src/Distribution/Simple/BuildPaths.hs
+@@ -3,6 +3,7 @@
+ dllExtension (Platform _arch os)= case os of
+                    Windows -> "dll"
+                    OSX     -> "dylib"
++                   IOS     -> "dylib"
+                    _       -> "so"
+
+ -- | Extension for static libraries

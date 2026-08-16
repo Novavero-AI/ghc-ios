@@ -1,0 +1,20 @@
+--- a/rts/ReportMemoryMap.c
++++ b/rts/ReportMemoryMap.c
+@@ -14,7 +14,7 @@
+
+ #include <string.h>
+
+-#if defined(darwin_HOST_OS)
++#if defined(darwin_HOST_OS) && !defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
+ #include <mach/mach.h>
+ #include <mach/mach_vm.h>
+ #include <mach/vm_region.h>
+@@ -67,7 +67,7 @@
+     }
+ }
+
+-#elif defined(darwin_HOST_OS)
++#elif defined(darwin_HOST_OS) && !defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
+
+ void reportMemoryMap(void) {
+     // Inspired by MacFUSE /proc implementation
