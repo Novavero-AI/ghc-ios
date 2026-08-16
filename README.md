@@ -38,7 +38,7 @@ cross-compiler/host-fix-rts-darwin.sh  host-side fix for GHCup's darwin GHC 9.8
 | 6 | Apple's assembler rejects arithmetic in libffi's CFI directives; Hadrian re-extracts the vendored tarball over source patches | Homebrew LLVM clang + repack the tarball with `gcc_cv_as_cfi_pseudo_op=no` | workflow step |
 | 7 | GHCup's host darwin GHC 9.8 ships a redundant `-Wl,-U` flag (warns on Xcode 15+) | idempotent `rts-*.conf` edit | `host-fix-rts-darwin.sh` |
 
-Build configuration that matters: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS` (iOS is Darwin, but GHC doesn't say so for cross targets), and a versioned deployment target (`--target=arm64-apple-ios15.0`) in the stage-1 C flags, without which newer clang rejects the thread-local storage the threaded RTS needs. Hadrian does not persist CLI settings between invocations: the install step needs the same flags and flavour as the build step, and must export the same CC/CXX toolchain because the binary-dist configure it invokes re-detects its tools from the environment.
+Build configuration that matters: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS` (iOS is Darwin, but GHC doesn't say so for cross targets), and a versioned deployment target (`--target=arm64-apple-ios15.0`) in the stage-1 C flags, without which newer clang rejects the thread-local storage the threaded RTS needs. Hadrian does not persist CLI settings between invocations: the install step needs the same flags and flavour as the build step, plus `SDKROOT` and a pre-seeded `CXX_STD_LIB_LIBS=c++` for the binary-dist's host configure - current Apple SDKs ship no separate linkable libc++abi, and the C++ probe has no plain-`c++` fallback.
 
 ## Building it
 
@@ -52,7 +52,7 @@ This is the compiler-side story. Running the GHC RTS well on a device needs thre
 
 ## Prior art
 
-The original `ghc-ios` scripts (GHC 7.x era) proved this was possible before going quiet. reflex-platform shipped iOS cross-compilation for years, pinned to GHC 8.10, and its maintainers describe that support as bitrotted today. A [2022 guide on GHC's wiki](https://gitlab.haskell.org/ghc/ghc/-/wikis/Brief-Guide-for-Compiling-GHC-to-iOS) built a GHC 9.2.1 cross-compiler and ran it on a jailbroken iPhone: impressive, single-shot, and never carried forward. The `mac2ios` approach retags macOS Mach-O output as iOS instead of cross-compiling at all. This repo differs by being versioned, CI-reproducible on a stock runner, App-Store-compatible (no jailbreak entitlements), and documented failure by failure.
+The original `ghc-ios` scripts (GHC 7.x era) proved this was possible before going quiet. reflex-platform shipped iOS cross-compilation for years, pinned to GHC 8.10, and its maintainers [describe that support as bitrotted](https://github.com/obsidiansystems/obelisk/pull/1139#issuecomment-4845448746) today. A [2022 guide on GHC's wiki](https://gitlab.haskell.org/ghc/ghc/-/wikis/Brief-Guide-for-Compiling-GHC-to-iOS) built a GHC 9.2.1 cross-compiler and ran it on a jailbroken iPhone: impressive, single-shot, and never carried forward. The `mac2ios` approach retags macOS Mach-O output as iOS instead of cross-compiling at all. This repo differs by being versioned, CI-reproducible on a stock runner, App-Store-compatible (no jailbreak entitlements), and documented failure by failure.
 
 ## Upstreaming
 

@@ -320,6 +320,7 @@ on an Xcode 26 image - five iterations after the runner image drift
 began (v38 TLS floor, v39 posix_spawn branch, v40 bindist toolchain,
 v41 disproved sysroot theory, v42 pre-seeded C++ std lib). Toolchain
 published as Release v42.
+
 ---
 
 ## Patches (5 total, `cross-compiler/patches/`)
@@ -339,8 +340,8 @@ Plus:
 ## Current Workflow Steps
 
 1. Cache check (keyed `ghc-9.8.4-aarch64-apple-ios-v<n>`, bumped whenever a patch or build flag changes)
-2. Install boot GHC 9.8, cabal, alex, happy
-3. Install build deps (automake, autoconf, libtool, Homebrew LLVM)
+2. Install boot GHC 9.8 + cabal
+3. Install build deps (automake, autoconf, libtool, Homebrew LLVM; pinned alex + happy via cabal)
 4. Download GHC 9.8.4 source tarball
 5. Create `ios-cc` / `ios-cxx` wrappers (Homebrew LLVM clang + `-target arm64-apple-ios -isysroot $IOS_SDK`)
 6. **Patch libffi tarball** - extract, force `gcc_cv_as_cfi_pseudo_op=no` in configure, repackage
