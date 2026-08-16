@@ -329,17 +329,3 @@ published as Release v42.
 Plus:
 - libffi tarball repackage (script, not patch file) - `gcc_cv_as_cfi_pseudo_op=no`.
 - `cross-compiler/host-fix-rts-darwin.sh` - host-side post-install fix (see Phase 7).
-
-## Current Workflow Steps
-
-1. Cache check (key is a content hash of the patches and the workflow file itself - never bumped by hand; a `release_tag` run skips restore, so every Release is built from scratch by its own run)
-2. Install boot GHC 9.8 + cabal
-3. Install build deps (automake, autoconf, libtool, Homebrew LLVM; pinned alex + happy via cabal)
-4. Download GHC 9.8.4 source tarball
-5. Create `ios-cc` / `ios-cxx` wrappers (Homebrew LLVM clang + `-target arm64-apple-ios -isysroot $IOS_SDK`)
-6. **Patch libffi tarball** - extract, force `gcc_cv_as_cfi_pseudo_op=no` in configure, repackage
-7. **Apply patches** (`cross-compiler/patches/001-005`) - Hadrian, Cabal, RTS, process fixes via `patch -p1`
-8. Configure: `--target=aarch64-apple-ios`, Homebrew LLVM tools, `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS`
-9. Build: `hadrian/build -j --flavour=quick+native_bignum` with `--flags=-libm --flags=-libdl` and `-L` for libffi
-10. Install: same Hadrian flags as build (Hadrian doesn't persist CLI settings), with SDKROOT and the pre-seeded CXX_STD_LIB_* answers exported for the bindist's host configure (v41/v42)
-11. Verify -> package -> upload artifact (a `release_tag` dispatch input additionally publishes it as a GitHub Release)
