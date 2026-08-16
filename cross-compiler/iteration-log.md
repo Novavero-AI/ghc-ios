@@ -332,7 +332,7 @@ Plus:
 
 ## Current Workflow Steps
 
-1. Cache check (keyed `ghc-9.8.4-aarch64-apple-ios-v<n>`, bumped whenever a patch or build flag changes)
+1. Cache check (key is a content hash of the patches and the workflow file itself - never bumped by hand; a `release_tag` run skips restore, so every Release is built from scratch by its own run)
 2. Install boot GHC 9.8 + cabal
 3. Install build deps (automake, autoconf, libtool, Homebrew LLVM; pinned alex + happy via cabal)
 4. Download GHC 9.8.4 source tarball
