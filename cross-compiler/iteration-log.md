@@ -312,6 +312,15 @@ missing plain-c++ candidate is a GHC bug against current Apple SDKs
 (it will bite plain macOS builds on Xcode 26 too) and joins the
 upstreaming queue alongside the patches.
 
+Result: **GREEN. ALL STEPS PASSED.** Run 31944695895 on commit
+04b24cd: configure, full Hadrian build, install, portability patch,
+verify (the installed compiler reports "version 9.8.4", "Target
+platform: aarch64-apple-ios"), package, upload. The first green build
+on an Xcode 26 image - five iterations after the runner image drift
+began (v38 TLS floor, v39 posix_spawn branch, v40 bindist toolchain,
+v41 disproved sysroot theory, v42 pre-seeded C++ std lib). Toolchain
+published as Release v42.
+
 ---
 
 ## Patches (5 total, `cross-compiler/patches/`)
