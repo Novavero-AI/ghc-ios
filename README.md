@@ -64,4 +64,4 @@ BSD-3-Clause. The patches are diffs against GHC, Cabal, and process sources, whi
 
 ---
 
-[Novavero AI Inc.](https://novavero.ai) &middot; Waterloo, Canada
+<p align="center"><sub>BSD-3-Clause - <a href="https://novavero.ai">Novavero AI Inc.</a> - Waterloo, Canada</sub></p>
