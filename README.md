@@ -68,7 +68,7 @@ The original `ghc-ios` scripts (GHC 7.x era) proved this was possible before goi
 
 ## Upstreaming
 
-Several of these patches are one-line guards that belong in GHC proper; upstreaming is tracked in [#3](https://github.com/Novavero-AI/ghc-ios/issues/3). If you work on GHC or Hadrian and have opinions about iOS as a target, weigh in there or open an issue.
+Several of these patches are one-line guards that belong in GHC proper. If you work on GHC or Hadrian and have opinions about iOS as a target, open an issue.
 
 ## License
 
