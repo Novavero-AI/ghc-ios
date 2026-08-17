@@ -30,19 +30,15 @@
 # flag from rts/rts.cabal.in, but GHC 9.8.x - which is what the iOS cross
 # compiler is built from - still ships it.
 #
-# Two patches needed in total
-# ---------------------------
-# 1. THIS SCRIPT - patches the GHCup-installed *host* GHC's rts conf, since
-#    that is what runs 'cabal build' for every downstream nova-kit app on
-#    the developer's machine. Idempotent: safe to re-run after every
-#    'ghcup install ghc'.
-#
-# 2. cross-compiler/patches/006-* - planned: a verified patch against
-#    rts/rts.cabal.in in the GHC 9.8.4 source tarball. This would
-#    fix the iOS cross-compiler's RTS conf at source-tree level so the
-#    cross-compiler bootstrap in CI also avoids the warning. Not critical:
-#    the iOS link goes through nova-kit's own build pipeline, which uses
-#    its own clang invocations and never reads this conf.
+# Why there is no source-level patch for this
+# -------------------------------------------
+# Only the host GHC needs fixing: it is what runs 'cabal build' for
+# downstream apps on a developer machine. The iOS cross-compiler's own
+# rts conf never contains the flag - Cabal evaluates os(darwin) against
+# the TARGET, so the darwin block is omitted for aarch64-apple-ios -
+# and nova-kit's device link drives clang directly, never reading the
+# conf. Upstream removed the flag in GHC 9.10, so the planned 9.14 port
+# (issue #4) retires this script entirely.
 #
 # Usage
 # -----
