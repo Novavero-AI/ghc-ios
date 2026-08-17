@@ -33,20 +33,20 @@ cross-compiler/host-fix-rts-darwin.sh  host-side fix for GHCup's darwin GHC 9.8
 |---|---------|-----|-------|
 | 1 | Hadrian doesn't treat iOS as an Apple platform (GNU ld flags, wrong rpaths) | `isOsxTarget` includes `"ios"` | `patches/001` |
 | 2 | Cabal names iOS shared libs `.so` | `dllExtension`: `IOS -> "dylib"` | `patches/002` |
-| 3 | `mach_vm.h` is `#error` on iOS; the usual `TARGET_OS_IPHONE` guard fails silently without its header | guard on `__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__` | `patches/003` |
+| 3 | `mach_vm.h` is `#error` on iOS (and the obvious `TARGET_OS_IPHONE` guard fails silently) | guard on `__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__` | `patches/003` |
 | 4 | Hadrian compiles against the boot GHC's Cabal, so fix 2 never takes effect | build Hadrian against in-tree Cabal | `patches/004` |
 | 5 | `posix_spawn`'s `addchdir` file actions are unavailable on iOS (newer SDKs declare the non-`_np` variant too) | guard both branches | `patches/005` |
-| 6 | Apple's assembler rejects arithmetic in libffi's CFI directives; Hadrian re-extracts the vendored tarball over source patches | Homebrew LLVM clang + repack the tarball with `gcc_cv_as_cfi_pseudo_op=no` | workflow step |
+| 6 | Apple's assembler rejects libffi's CFI directives; source patches don't survive Hadrian's tarball re-extraction | Homebrew LLVM clang + repack the tarball with `gcc_cv_as_cfi_pseudo_op=no` | workflow step |
 | 7 | GHCup's host darwin GHC 9.8 ships a redundant `-Wl,-U` flag (warns on Xcode 15+) | idempotent `rts-*.conf` edit | `host-fix-rts-darwin.sh` |
 
 ## The build, in order
 
 The workflow is the executable version of this recipe; to replicate it outside CI, follow the same order:
 
-1. Install a boot GHC 9.8, cabal, automake/autoconf/libtool, Homebrew `llvm@22` (the pinned major every green build used), and pinned `alex` + `happy`.
+1. Install a boot GHC 9.8, cabal, automake/autoconf/libtool, Homebrew `llvm@22` (pinned like every other input), and pinned `alex` + `happy`.
 2. Download `ghc-9.8.4-src` and verify its sha256 against the official `SHA256SUMS`.
 3. Write `ios-cc`/`ios-cxx` wrappers: Homebrew clang with `-target arm64-apple-ios15.0 -isysroot <iOS SDK>` baked in.
-4. Repack the vendored libffi tarball with `gcc_cv_as_cfi_pseudo_op=no` forced in its configure - Hadrian re-extracts the tarball on every build, so patching extracted source never sticks.
+4. Repack the vendored libffi tarball with `gcc_cv_as_cfi_pseudo_op=no` forced in its configure.
 5. Apply `cross-compiler/patches/001-005` with `patch -p1 --fuzz=0` and assert each landed.
 6. Configure with `--target=aarch64-apple-ios`, the wrappers, Homebrew `llc`/`opt`, and `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS --target=arm64-apple-ios15.0` in the stage-1 C flags: iOS is Darwin, but GHC doesn't say so for cross targets, and without the versioned target newer clang rejects the thread-local storage the threaded RTS needs.
 7. Build with Hadrian: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), and `-L` for the in-tree libffi.
