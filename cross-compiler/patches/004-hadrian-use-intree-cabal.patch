@@ -6,6 +6,6 @@
 +          ../libraries/Cabal/Cabal/,
 +          ../libraries/Cabal/Cabal-syntax/
 +allow-newer: Cabal, Cabal-syntax
-
+ 
  -- This essentially freezes the build plan for hadrian
  index-state: 2024-05-01T10:00:00Z

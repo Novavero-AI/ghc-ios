@@ -1,9 +1,11 @@
 --- a/hadrian/src/Oracles/Setting.hs
 +++ b/hadrian/src/Oracles/Setting.hs
-@@ -1,5 +1,5 @@
+@@ -265,7 +265,7 @@
+ isJsTarget = anyTargetArch ["javascript"]
+ 
  isOsxTarget :: Action Bool
 -isOsxTarget = anyTargetOs ["darwin"]
 +isOsxTarget = anyTargetOs ["darwin", "ios"]
-
+ 
  -- | Check whether the target architecture setting matches one of the given
  -- strings.
