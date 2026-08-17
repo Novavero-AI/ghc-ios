@@ -39,7 +39,19 @@ cross-compiler/host-fix-rts-darwin.sh  host-side fix for GHCup's darwin GHC 9.8
 | 6 | Apple's assembler rejects arithmetic in libffi's CFI directives; Hadrian re-extracts the vendored tarball over source patches | Homebrew LLVM clang + repack the tarball with `gcc_cv_as_cfi_pseudo_op=no` | workflow step |
 | 7 | GHCup's host darwin GHC 9.8 ships a redundant `-Wl,-U` flag (warns on Xcode 15+) | idempotent `rts-*.conf` edit | `host-fix-rts-darwin.sh` |
 
-Build configuration that matters: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS` (iOS is Darwin, but GHC doesn't say so for cross targets), and a versioned deployment target (`--target=arm64-apple-ios15.0`) in the stage-1 C flags, without which newer clang rejects the thread-local storage the threaded RTS needs. Hadrian does not persist CLI settings between invocations: the install step needs the same flags and flavour as the build step, plus `SDKROOT` and a pre-seeded `CXX_STD_LIB_LIBS=c++` for the binary-dist's host configure - current Apple SDKs ship no separate linkable libc++abi, and the C++ probe has no plain-`c++` fallback.
+## The build, in order
+
+The workflow is the executable version of this recipe; to replicate it outside CI, follow the same order:
+
+1. Install a boot GHC 9.8, cabal, automake/autoconf/libtool, Homebrew `llvm@22` (the pinned major every green build used), and pinned `alex` + `happy`.
+2. Download `ghc-9.8.4-src` and verify its sha256 against the official `SHA256SUMS`.
+3. Write `ios-cc`/`ios-cxx` wrappers: Homebrew clang with `-target arm64-apple-ios15.0 -isysroot <iOS SDK>` baked in.
+4. Repack the vendored libffi tarball with `gcc_cv_as_cfi_pseudo_op=no` forced in its configure - Hadrian re-extracts the tarball on every build, so patching extracted source never sticks.
+5. Apply `cross-compiler/patches/001-005` with `patch -p1 --fuzz=0` and assert each landed.
+6. Configure with `--target=aarch64-apple-ios`, the wrappers, Homebrew `llc`/`opt`, and `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS --target=arm64-apple-ios15.0` in the stage-1 C flags: iOS is Darwin, but GHC doesn't say so for cross targets, and without the versioned target newer clang rejects the thread-local storage the threaded RTS needs.
+7. Build with Hadrian: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), and `-L` for the in-tree libffi.
+8. Install with the same flavour and flags - Hadrian persists nothing between invocations - plus `SDKROOT` and a pre-seeded `CXX_STD_LIB_LIBS=c++` for the binary-dist's host configure: current Apple SDKs ship no separate linkable libc++abi, and the C++ probe has no plain-`c++` fallback.
+9. Patch the install for portability (`xcrun`-based `ios-cc`/`ios-ld`, `$topdir`-relative settings), then verify: `--info` must report `aarch64-apple-ios`, and a smoke `-staticlib` compile through the shipped wrappers must produce an arm64 static library.
 
 ## Building it
 
