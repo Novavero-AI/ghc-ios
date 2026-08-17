@@ -23,7 +23,10 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - uses: actions/checkout@v7
+      # Actions are pinned to commit SHAs (tag in the trailing comment):
+      # major tags are movable, and the publish job below holds this
+      # repo's only write token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Restore cross GHC cache
         id: cache-ghc
@@ -35,14 +38,14 @@ jobs:
         # needs a manual bump. No restore-keys on purpose: a stale
         # toolchain must never match.
         if: ${{ inputs.release_tag == '' }}
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/ghc-ios
           key: ghc-9.8.4-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
 
       - name: Install boot GHC
         if: steps.cache-ghc.outputs.cache-hit != 'true'
-        uses: haskell-actions/setup@v2
+        uses: haskell-actions/setup@6037f33647c3f17758a2356c80fc4a53d7e0685d # v2
         with:
           ghc-version: '9.8'
           cabal-version: 'latest'
@@ -50,14 +53,17 @@ jobs:
       - name: Install build deps
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          brew install automake autoconf libtool llvm
+          # llvm@22 pins the major every green build used (log v40 onward
+          # names llvm 22); bare 'brew install llvm' floats to whatever
+          # Homebrew ships and was the last unpinned build input.
+          brew install automake autoconf libtool llvm@22
           # Pinned to the exact versions the v42 green run built with.
           # A floating 'cabal install alex happy' takes whatever is
           # newest - a reproducibility hole, and it once put a run in
           # the blast radius of a mirror that had not yet synced a
           # fresh release.
           cd /tmp && cabal install alex-3.5.4.2 happy-2.2 --install-method=copy --overwrite-policy=always
-          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/opt/llvm@22/bin" >> $GITHUB_PATH
           echo "$HOME/.cabal/bin" >> $GITHUB_PATH
 
       - name: Download and extract GHC source
@@ -65,7 +71,8 @@ jobs:
         run: |
           curl -L https://downloads.haskell.org/ghc/9.8.4/ghc-9.8.4-src.tar.xz -o /tmp/ghc-src.tar.xz
           # Pin the source input like everything else (alex/happy versions,
-          # action majors): the value from the official 9.8.4 SHA256SUMS.
+          # llvm major, action SHAs): the value from the official 9.8.4
+          # SHA256SUMS.
           echo "17e8188f3c8a5c2f73fb4e35d01032e8dc258835ec876d52c8ad8ee3d24b2fc5  /tmp/ghc-src.tar.xz" | shasum -a 256 -c -
           tar xf /tmp/ghc-src.tar.xz -C /tmp
           rm /tmp/ghc-src.tar.xz
@@ -80,8 +87,8 @@ jobs:
           # Apple's integrated assembler rejects arithmetic in CFI directives
           # (e.g. .cfi_adjust_cfa_offset (8*2 + ...)) which libffi's aarch64
           # assembly requires. Upstream LLVM handles these correctly.
-          LLVM_CC=/opt/homebrew/opt/llvm/bin/clang
-          LLVM_CXX=/opt/homebrew/opt/llvm/bin/clang++
+          LLVM_CC=/opt/homebrew/opt/llvm@22/bin/clang
+          LLVM_CXX=/opt/homebrew/opt/llvm@22/bin/clang++
 
           printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$LLVM_CC" "$IOS_SDK" > /tmp/ios-cc
           printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$LLVM_CXX" "$IOS_SDK" > /tmp/ios-cxx
@@ -140,17 +147,19 @@ jobs:
           #   003 - RTS: guard mach_vm.h includes for iOS
           #   004 - Hadrian: build against in-tree Cabal so 002 takes effect
           #   005 - process: guard posix_spawn addchdir variants for iOS
+          # --fuzz=0 because plain 'patch -p1' defaults to fuzz 2 and can
+          # silently accept a fuzzy-but-wrong match; the patches are exact
+          # diffs against the pinned pristine tarball, so ANY context
+          # drift is a real change that must fail here, loudly.
           for p in $GITHUB_WORKSPACE/cross-compiler/patches/*.patch; do
             echo "=== Applying $(basename $p) ==="
-            patch -p1 --fuzz=2 < "$p"
+            patch -p1 --fuzz=0 < "$p"
           done
 
-          # Verify all patches applied. Every patch gets an assertion
-          # here because 'patch -p1' silently succeeds on a fuzzy-but-
-          # wrong match (e.g. a file renamed upstream where our hunk
-          # still applies against a stale copy). Catching a missed
-          # patch here is far cheaper than a cryptic link failure
-          # 45 minutes into the Hadrian build.
+          # Belt and braces on top of --fuzz=0: these greps assert the
+          # patched code is really in place. Catching a problem here is
+          # far cheaper than a cryptic link failure 45 minutes into the
+          # Hadrian build.
           grep -q '"ios"' hadrian/src/Oracles/Setting.hs || { echo "PATCH 001 FAILED"; exit 1; }
           grep -q 'IOS' libraries/Cabal/Cabal/src/Distribution/Simple/BuildPaths.hs || { echo "PATCH 002 FAILED"; exit 1; }
           MATCHES=$(grep -c '__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__' rts/ReportMemoryMap.c)
@@ -169,8 +178,8 @@ jobs:
           # the patched configure that disables CFI pseudo-ops.
           ./configure \
             --target=aarch64-apple-ios \
-            --with-llc=/opt/homebrew/opt/llvm/bin/llc \
-            --with-opt=/opt/homebrew/opt/llvm/bin/opt \
+            --with-llc=/opt/homebrew/opt/llvm@22/bin/llc \
+            --with-opt=/opt/homebrew/opt/llvm@22/bin/opt \
             --prefix=$HOME/ghc-ios \
             CC=/tmp/ios-cc \
             CXX=/tmp/ios-cxx \
@@ -244,7 +253,7 @@ jobs:
         # a later packaging failure cannot cost the hour-long build; the
         # portability patch below is applied fresh on every run.
         if: steps.cache-ghc.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/ghc-ios
           key: ghc-9.8.4-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
@@ -273,13 +282,18 @@ jobs:
           printf '#!/bin/sh\nexec xcrun --sdk iphoneos ld "$@"\n' > "$BIN_DIR/ios-ld"
           chmod +x "$BIN_DIR/ios-ld"
 
-          # 3. Patch settings to use $topdir-relative wrappers
+          # 3. Patch settings to use $topdir-relative wrappers. The last
+          #    rule keeps the user contract of 'brew install llvm' (README):
+          #    the BUILD pins llvm@22, but the llc/opt paths baked into
+          #    settings (only consulted for -fllvm) must resolve against
+          #    the unversioned formula on a user machine.
           SETTINGS="$GHC_LIB/settings"
           sed -i '' \
             -e 's|"C compiler command", "[^"]*"|"C compiler command", "$topdir/bin/ios-cc"|' \
             -e 's|"Haskell CPP command", "[^"]*"|"Haskell CPP command", "$topdir/bin/ios-cc"|' \
             -e 's|"ld command", "[^"]*"|"ld command", "$topdir/bin/ios-ld"|' \
             -e 's|"cross compiling", "NO"|"cross compiling", "YES"|' \
+            -e 's|/opt/homebrew/opt/llvm@22/bin/|/opt/homebrew/opt/llvm/bin/|g' \
             "$SETTINGS"
 
           # 4. Verify
@@ -290,13 +304,14 @@ jobs:
           echo "=== settings (patched lines) ==="
           grep -E '(C compiler command|Haskell CPP command|ld command|cross compiling)' "$SETTINGS"
 
-          # 5. No build-machine wrapper path may survive into settings.
-          #    v40 exports CC/CXX into the bindist configure; if a future
-          #    GHC records extra toolchain fields, this catches the leak
-          #    before anyone downloads a broken artifact.
-          if grep -q '/tmp/ios' "$SETTINGS"; then
-            echo "settings still references build-machine wrappers:"
-            grep '/tmp/ios' "$SETTINGS"
+          # 5. No build-machine path may survive into settings: neither
+          #    the /tmp wrappers (v40 exports CC/CXX into the bindist
+          #    configure; a future GHC could record extra toolchain
+          #    fields) nor the versioned llvm@22 keg, which users are not
+          #    asked to install.
+          if grep -q '/tmp/ios\|llvm@' "$SETTINGS"; then
+            echo "settings still references build-machine paths:"
+            grep '/tmp/ios\|llvm@' "$SETTINGS"
             exit 1
           fi
 
@@ -308,11 +323,24 @@ jobs:
           ~/ghc-ios/bin/aarch64-apple-ios-ghc --version
           ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep '("Target platform","aarch64-apple-ios")'
 
+          # Smoke test: compile a static library with the exact toolchain
+          # a user downloads - the xcrun-based ios-cc/ios-ld wrappers the
+          # portability step just wrote, not the /tmp build wrappers,
+          # which would otherwise ship with zero coverage. Same invocation
+          # shape as the README's Using-it section.
+          SMOKE=$(mktemp -d)
+          printf '{-# LANGUAGE ForeignFunctionInterface #-}\nmodule Smoke where\n\nforeign export ccall nk_smoke :: Int -> Int\n\nnk_smoke :: Int -> Int\nnk_smoke = succ\n' > "$SMOKE/Smoke.hs"
+          ~/ghc-ios/bin/aarch64-apple-ios-ghc -staticlib -no-hs-main -o "$SMOKE/libsmoke.a" "$SMOKE/Smoke.hs"
+          lipo -info "$SMOKE/libsmoke.a"
+          lipo -info "$SMOKE/libsmoke.a" | grep arm64
+          nm "$SMOKE/libsmoke.a" 2>/dev/null | grep -q '_nk_smoke'
+          echo "smoke test OK: arm64 static library with exported symbol"
+
       - name: Package
         run: tar czf ghc-9.8.4-aarch64-apple-ios.tar.gz -C ~ ghc-ios
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ghc-9.8.4-aarch64-apple-ios
           path: ghc-9.8.4-aarch64-apple-ios.tar.gz
@@ -335,7 +363,7 @@ jobs:
 
     steps:
       - name: Download toolchain artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ghc-9.8.4-aarch64-apple-ios
 
