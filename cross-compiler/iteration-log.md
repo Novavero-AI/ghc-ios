@@ -12,7 +12,10 @@ This log records every failure and fix: the original bootstrap iterations
 Xcode images (v38+). Commit hashes in v1-v37 reference nova-kit's private
 tree, where this work originally lived; from v38 onward every run is in
 this repo's public Actions history, and the whole thing is reproducible
-by dispatching the workflow.
+by dispatching the workflow. Release tags continue this numbering, but
+only compiler-build failures get entries - a release like v43 may have
+no matching entry; its story is in the release notes and commit
+history.
 
 ---
 
