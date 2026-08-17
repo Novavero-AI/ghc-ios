@@ -53,15 +53,13 @@ jobs:
       - name: Install build deps
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          # llvm@22 pins the major every green build used (log v40 onward
-          # names llvm 22); bare 'brew install llvm' floats to whatever
-          # Homebrew ships and was the last unpinned build input.
+          # llvm@22, not bare llvm: the LLVM major is a pinned build input
+          # like the source checksum and alex/happy; the bare formula
+          # floats with Homebrew.
           brew install automake autoconf libtool llvm@22
-          # Pinned to the exact versions the v42 green run built with.
-          # A floating 'cabal install alex happy' takes whatever is
-          # newest - a reproducibility hole, and it once put a run in
-          # the blast radius of a mirror that had not yet synced a
-          # fresh release.
+          # Exact versions: a floating 'cabal install alex happy' takes
+          # whatever is newest, and can land in the window where a mirror
+          # has not yet synced a fresh release.
           cd /tmp && cabal install alex-3.5.4.2 happy-2.2 --install-method=copy --overwrite-policy=always
           echo "/opt/homebrew/opt/llvm@22/bin" >> $GITHUB_PATH
           echo "$HOME/.cabal/bin" >> $GITHUB_PATH
@@ -107,21 +105,22 @@ jobs:
           # libffi's aarch64/sysv.S outright; Homebrew LLVM parses them,
           # but libffi's CFI path is still broken there (trailing
           # semicolons from C macro expansion, e.g. .cfi_def_cfa x1, 40;),
-          # so CFI is disabled entirely (log v14-v26).
+          # so CFI is disabled entirely.
           #
           # Hadrian extracts libffi from libffi-tarballs/libffi-3.4.6.tar.gz
-          # and re-extracts on every build attempt, so we must patch the
-          # TARBALL itself. We change the configure script to force
-          # HAVE_AS_CFI_PSEUDO_OP=no so CFI macros expand to nothing.
-          # Only loses debug stack traces through FFI - irrelevant for us.
+          # and re-extracts on every build attempt, so the TARBALL itself
+          # must be patched. Forcing the configure cache variable
+          # gcc_cv_as_cfi_pseudo_op=no makes the emitted HAVE_AS_CFI_PSEUDO_OP
+          # define turn every CFI macro into a no-op. Only loses debug
+          # stack traces through FFI.
           TARBALL=libffi-tarballs/libffi-3.4.6.tar.gz
           echo "=== Patching libffi tarball ==="
           ls -la "$TARBALL"
 
           mkdir -p /tmp/libffi-patch
           tar xf "$TARBALL" -C /tmp/libffi-patch
-          # The autoconf cache variable is gcc_cv_as_cfi_pseudo_op
-          # (confirmed by grepping the actual libffi 3.4.6 configure script).
+          # GCC-style cache variable name, even though the test runs
+          # against clang.
           find /tmp/libffi-patch -name 'configure' -exec \
             sed -i '' 's/gcc_cv_as_cfi_pseudo_op=yes/gcc_cv_as_cfi_pseudo_op=no/g' {} \;
 
@@ -216,20 +215,20 @@ jobs:
           #
           # The install rule runs the binary-dist's OWN configure, which
           # re-detects a HOST toolchain and runs compile-and-execute
-          # probes natively. Do NOT hand it the iOS cross wrappers (v40
-          # tried): with no explicit --host, autoconf compiles a test
-          # program and RUNS it, and an arm64-ios binary cannot execute
-          # on the macOS host ("cannot run C compiled programs").
+          # probes natively. Do NOT hand it the iOS cross wrappers: with
+          # no explicit --host, autoconf compiles a test program and RUNS
+          # it, and an arm64-ios binary cannot execute on the macOS host
+          # ("cannot run C compiled programs").
           export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 
           # The C++ std lib probe (fp_find_cxx_std_lib.m4) only tries
           # c++abi/cxxrt combinations and has no plain-c++ fallback; the
           # Xcode 26 macOS SDK no longer ships a linkable libc++abi, so
-          # the probe cannot succeed on this image even with SDKROOT
-          # (v41 proved that; the iOS SDK still has it, which is why the
-          # source-tree configure passes). Pre-seed the documented
-          # escape-hatch variables: modern Darwin bundles the ABI inside
-          # libc++, so plain c++ is the truthful answer (v42).
+          # the probe cannot succeed on this image even with SDKROOT (the
+          # iOS SDK still carries libc++abi, which is why the source-tree
+          # configure passes). Pre-seed the documented escape-hatch
+          # variables: modern Darwin bundles the ABI inside libc++, so
+          # plain c++ is the truthful answer.
           export CXX_STD_LIB_LIBS="c++"
           export CXX_STD_LIB_LIB_DIRS=""
           export CXX_STD_LIB_DYN_LIB_DIRS=""
@@ -305,10 +304,10 @@ jobs:
           grep -E '(C compiler command|Haskell CPP command|ld command|cross compiling)' "$SETTINGS"
 
           # 5. No build-machine path may survive into settings: neither
-          #    the /tmp wrappers (v40 exports CC/CXX into the bindist
-          #    configure; a future GHC could record extra toolchain
-          #    fields) nor the versioned llvm@22 keg, which users are not
-          #    asked to install.
+          #    the /tmp wrappers nor the versioned llvm@22 keg, which
+          #    users are not asked to install. Nothing writes them today;
+          #    a future GHC recording extra toolchain fields must not
+          #    ship a broken settings unnoticed.
           if grep -q '/tmp/ios\|llvm@' "$SETTINGS"; then
             echo "settings still references build-machine paths:"
             grep '/tmp/ios\|llvm@' "$SETTINGS"
@@ -325,9 +324,10 @@ jobs:
 
           # Smoke test: compile a static library with the exact toolchain
           # a user downloads - the xcrun-based ios-cc/ios-ld wrappers the
-          # portability step just wrote, not the /tmp build wrappers,
-          # which would otherwise ship with zero coverage. Same invocation
-          # shape as the README's Using-it section.
+          # portability step just wrote, not the /tmp build wrappers.
+          # This is the only compile the shipped wrappers get before
+          # upload. Same invocation shape as the README's Using-it
+          # section.
           SMOKE=$(mktemp -d)
           printf '{-# LANGUAGE ForeignFunctionInterface #-}\nmodule Smoke where\n\nforeign export ccall nk_smoke :: Int -> Int\n\nnk_smoke :: Int -> Int\nnk_smoke = succ\n' > "$SMOKE/Smoke.hs"
           ~/ghc-ios/bin/aarch64-apple-ios-ghc -staticlib -no-hs-main -o "$SMOKE/libsmoke.a" "$SMOKE/Smoke.hs"
@@ -345,7 +345,7 @@ jobs:
           name: ghc-9.8.4-aarch64-apple-ios
           path: ghc-9.8.4-aarch64-apple-ios.tar.gz
           # Repo retention cap is 30; the durable copy of a green build is
-          # its GitHub Release (see v42), not the CI artifact.
+          # its GitHub Release, not the CI artifact.
           retention-days: 30
 
   # Publishes THIS run's artifact as a durable Release. Opt-in via the
