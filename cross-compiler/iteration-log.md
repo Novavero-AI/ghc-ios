@@ -18,9 +18,9 @@ Xcode images (v38+). Commit hashes in v1-v37 reference nova-kit's private
 tree, where this work originally lived; from v38 onward every run is in
 this repo's public Actions history, and the whole thing is reproducible
 by dispatching the workflow. Release tags continue this numbering, but
-only compiler-build failures get entries - a release like v43 may have
-no matching entry; its story is in the release notes and commit
-history.
+only compiler-build failures get entries - releases v43 and v44 have no
+matching entries; their story is in the release notes and commit
+history, which is why the 9.14 port's first dispatch is v45.
 
 ---
 
@@ -335,7 +335,7 @@ pinned because 9.14.2 was still at rc1 when this landed.
 
 Every flag and patch was re-checked against a pristine 9.14.1 tree before the
 workflow was touched. Findings below are from source unless marked otherwise;
-v44 is the first dispatch and has not run.
+v45 is the first dispatch and has not run.
 
 #### iOS is now typed as Darwin
 
@@ -552,7 +552,7 @@ Whether it produces real noise downstream is unverified.
 
 #### The versionless LLVM triple, and clang's iOS 7 default
 
-Found before v44 ran, by tracing the flag path through the bindist rather
+Found before v45 ran, by tracing the flag path through the bindist rather
 than by a build failure.
 
 `installTo` (`hadrian/src/Rules/BinaryDist.hs`) runs the bindist's own
@@ -693,7 +693,7 @@ redirected - but the toolchain is published, and shipping a
 self-contradictory settings file is not something to leave for a consumer
 to discover.
 
-#### Open risks going into v44
+#### Open risks going into v45
 
 - 002/004 being droppable is a source derivation across m4, hadrian, the
   settings file and Cabal. One wrong link flips it. Loud failure, patches ready.

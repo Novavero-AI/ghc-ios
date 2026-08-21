@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Also publish the toolchain as this Release tag (e.g. v44). Empty = artifact only.'
+        description: 'Also publish the toolchain as this Release tag (e.g. v45). Empty = artifact only.'
         required: false
         default: ''
         type: string
@@ -245,10 +245,23 @@ jobs:
           # no doc target), but Install does, and hadrian persists NOTHING
           # between invocations - so the two commands must agree or the
           # install re-plans with a different target set.
-          hadrian/build -j --flavour=quick+native_bignum --docs=none \
+          hadrian/build -j -V --flavour=quick+native_bignum --docs=none \
             "stage1.*.ghc.link.opts += -optl-isysroot -optl$IOS_SDK" \
             "stage1.rts.cabal.configure.opts += --flags=-libm --flags=-libdl" \
-            "stage1.rts.ghc.link.opts += -optl-L_build/stage1/libffi/build/inst/lib"
+            "stage1.rts.ghc.link.opts += -optl-L_build/stage1/libffi/build/inst/lib" \
+            || {
+              # -V above prints every command hadrian runs, so the failing
+              # cc invocation is in the log verbatim. These dumps add the
+              # inputs that produced it: the generated target description
+              # and the settings the stage1 compiler actually reads.
+              echo "=== hadrian/cfg/default.target ==="
+              cat hadrian/cfg/default.target || true
+              echo "=== generated settings (all stages) ==="
+              find _build -name settings -maxdepth 4 -exec sh -c 'echo "--- $1 ---"; cat "$1"' _ {} \;
+              echo "=== rts config.log probe section ==="
+              find _build -path '*rts*' -name config.log -exec sh -c 'echo "--- $1 ---"; tail -80 "$1"' _ {} \;
+              exit 1
+            }
 
       - name: Install
         if: steps.cache-ghc.outputs.cache-hit != 'true'
