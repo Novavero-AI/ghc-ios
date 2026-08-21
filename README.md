@@ -16,7 +16,7 @@ Every prior GHC iOS cross-compiler was a one-shot - see [Prior art](#prior-art).
 
 It powers [nova-kit](https://novavero.ai), our pure-Haskell iOS framework. Full write-up: [Haskell on your iPhone](https://novavero.ai/blog/haskell-on-your-iphone). Every failure on the way: [`cross-compiler/iteration-log.md`](cross-compiler/iteration-log.md).
 
-The work here predates this repo: it was done in nova-kit's private tree over the winter of 2025-2026, reaching the first green build in March 2026 on GHC 9.8.4, and was extracted here for release. Phase 9 of the log ports it to 9.14.1, the first LTS line.
+The work here predates this repo: it was done in nova-kit's private tree over the winter of 2025-2026, reaching the first green build in March 2026 on GHC 9.8.4, and was extracted here for release. The port to 9.14.1, the first LTS line, is written up in [`cross-compiler/porting-9.14.md`](cross-compiler/porting-9.14.md).
 
 ## Contents
 
@@ -37,7 +37,7 @@ cross-compiler/porting-9.14.md         the 9.14 port, derived from source before
 | 4 | GHC's C++ std lib probe has no plain-`c++` candidate, and current macOS SDKs ship no linkable `libc++abi` | pre-seed `CXX_STD_LIB_LIBS=c++` for the bindist configure | workflow step |
 | 5 | The installed settings and wrappers carry build-machine paths, and 9.14's new CPP keys point at the host compiler | rewrite them to `$topdir`-relative `xcrun` wrappers | workflow step |
 
-Three fixes that GHC 9.8 needed are gone in 9.14, retired rather than ported - Hadrian now recognizes the target as Apple on its own, Cabal computes `dylib` for it, and libffi 3.5.2 fixed the Mach-O CFI construct that broke 3.4.6. The reasoning is in the log's Phase 9.
+Three fixes that GHC 9.8 needed are gone in 9.14, retired rather than ported - Hadrian now recognizes the target as Apple on its own, Cabal computes `dylib` for it, and libffi 3.5.2 fixed the Mach-O CFI construct that broke 3.4.6. The reasoning is in [`cross-compiler/porting-9.14.md`](cross-compiler/porting-9.14.md).
 
 ## The build, in order
 
@@ -47,10 +47,10 @@ The workflow is the executable version of this recipe; to replicate it outside C
 2. Download `ghc-9.14.1-src` and verify its sha256 against the official `SHA256SUMS`.
 3. Write `ios-cc`/`ios-cxx` wrappers: Apple clang via `xcrun`, with `-target arm64-apple-ios15.0 -isysroot <iOS SDK>` baked in.
 4. Apply `cross-compiler/patches/003` and `005` with `patch -p1 --fuzz=0` and assert each landed.
-5. Configure with `--target=aarch64-apple-ios`, the wrappers, and `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS --target=arm64-apple-ios15.0` in `CONF_CC_OPTS_STAGE2`. It must be STAGE2: 9.14 describes the stage-1 target toolchain in `hadrian/cfg/default.target`, which is generated from the STAGE2 variables, and `CONF_CC_OPTS_STAGE1` is accepted and then ignored. The versioned target has to come after the unversioned one configure prepends, or newer clang assumes an iOS floor with no thread-local storage and refuses the threaded RTS.
+5. Configure with `--target=aarch64-apple-ios`, the wrappers, `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS` in `CONF_CC_OPTS_STAGE2`, and `bootstrap_llvm_target=arm64-apple-ios15.0`. It must be STAGE2: 9.14 describes the stage-1 target toolchain in `hadrian/cfg/default.target`, generated from the STAGE2 variables, and `CONF_CC_OPTS_STAGE1` is accepted and then ignored. The deployment version belongs in `bootstrap_llvm_target`, not in the flags: `GHC_LLVM_TARGET` builds a versionless `arm64-apple-ios`, clang's default for that is iOS 7, and iOS 7 has no thread-local storage. Naming the target in the flags as well duplicates it, and the duplicate is what breaks the RTS configure - see the port document.
 6. Build with Hadrian: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), and `-L` for the in-tree libffi.
-7. Install with the same flavour and flags - Hadrian persists nothing between invocations - plus `SDKROOT` and a pre-seeded `CXX_STD_LIB_LIBS=c++` for the binary-dist's host configure.
-8. Patch the install for portability (`xcrun`-based `ios-cc`, `$topdir`-relative settings), then verify: a smoke `-staticlib` compile through the shipped wrapper must produce an arm64 static library whose Mach-O load commands say iOS.
+7. Install with the same flavour and flags - Hadrian persists nothing between invocations - plus `--docs=none`, `SDKROOT`, and a pre-seeded `CXX_STD_LIB_LIBS=c++` for the binary-dist's host configure. `--docs=none` is load-bearing: `binary-dist-dir` needs the `docs` phony unconditionally, the default doc set includes Sphinx PDFs, and a stock runner has neither Sphinx nor TeX.
+8. Patch the install for portability - `xcrun`-based `ios-cc` and `ios-cxx`, `$topdir`-relative settings, and the `bin/` wrappers rewritten to derive their prefix from their own location - then verify: a smoke `-staticlib` compile through the shipped wrapper must produce an arm64 static library whose Mach-O load commands say iOS at the right deployment floor, and the toolchain must still run from a prefix it was not built for.
 
 ## Building it
 
