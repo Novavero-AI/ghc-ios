@@ -108,12 +108,14 @@ jobs:
           echo "iOS SDK: $IOS_SDK"
 
           # Apple's clang, via xcrun. Through GHC 9.8 this build used
-          # Homebrew LLVM because Apple's integrated assembler rejected
-          # libffi 3.4.6's aarch64 CFI; libffi 3.5.2 (vendored by 9.14)
-          # fixed the construct that actually tripped it, and both
-          # assemblers now build it clean. Using Apple clang here also
-          # makes the build compiler the same one the SHIPPED ios-cc
-          # wrapper invokes at runtime, which was never true before.
+          # Homebrew LLVM, on the belief that Apple's integrated
+          # assembler was rejecting libffi 3.4.6's aarch64 CFI. That
+          # diagnosis was wrong: 3.4.6 fails identically on both
+          # assemblers, and what actually breaks is .cfi_startproc
+          # emitted before the global label on Mach-O, which 3.5.2
+          # (vendored by 9.14) moved. Using Apple clang also makes the
+          # build compiler the same one the SHIPPED ios-cc wrapper
+          # invokes at runtime, which was never true before.
           IOS_CC=$(xcrun --sdk iphoneos -f clang)
           IOS_CXX=$(xcrun --sdk iphoneos -f clang++)
           IOS_TRIPLE="arm64-apple-ios${IOS_MIN}"
@@ -136,7 +138,8 @@ jobs:
           #   005 - process: guard both posix_spawn addchdir variants for iOS
           # Numbers are historical and deliberately not renumbered: the
           # iteration log cross-references them by number throughout.
-          # 001/002/004 were retired by the 9.14 port - see Phase 9.
+          # 001/002/004 were retired by the 9.14 port - the reasoning
+          # is in cross-compiler/porting-9.14.md.
           # --fuzz=0 because plain 'patch -p1' defaults to fuzz 2 and can
           # silently accept a fuzzy-but-wrong match; the patches are exact
           # diffs against the pinned pristine tarball, so ANY context

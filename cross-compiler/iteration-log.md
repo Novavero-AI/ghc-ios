@@ -6,10 +6,13 @@ Output: A working `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 
 CI: `.github/workflows/cross-compiler.yml` (manual dispatch, `macos-latest`)
 Timeline: v1-v37 over the winter of 2025-2026 (first green 2026-03-07), host-GHC fixes April 2026, v38-v42 August 2026 against newer Xcode images, port to 9.14.1 (Phase 9, first green 2026-08-21).
 
-Phases 1-8 built and maintained the toolchain on GHC 9.8.4. Phase 9 ports it to
-9.14.1, the first LTS line. Everything before Phase 9 describes the 9.8.4 build
-and is kept verbatim as history: where a 9.8.4-era statement no longer holds for
-9.14, Phase 9 says so rather than editing the original entry.
+Phases 1-8 built and maintained the toolchain on GHC 9.8.4; Phase 9 ports it to
+9.14.1, the first LTS line, and the analysis behind that port has its own
+document, [`porting-9.14.md`](porting-9.14.md). Earlier entries describe the
+9.8.4 build and are kept as history: where a 9.8.4-era statement no longer holds
+for 9.14, the port document says so rather than the entry being rewritten. A
+statement that was never true is a different case and is corrected in place,
+marked as a correction - see v42.
 
 No prior GHC iOS cross-compiler published its failures. This log is that
 record: the original bootstrap iterations (v1-v37), then the maintenance
@@ -27,7 +30,7 @@ history, which is why the 9.14 port's first dispatch is v45.
 ## Key Decisions
 
 Current as of the 9.14.1 port. Superseded 9.8.4-era decisions are marked; the
-reasoning that retired them is in Phase 9.
+reasoning that retired them is in [`porting-9.14.md`](porting-9.14.md).
 
 | Decision | Why |
 |----------|-----|
@@ -397,7 +400,7 @@ cross-compiler for `aarch64-apple-ios`.
 | 003 | `rts/ReportMemoryMap.c` | Guard `mach_vm.h` includes for iOS |
 | 005 | `libraries/process/.../posix_spawn.c` | Guard both `addchdir` branches for iOS |
 
-Retired by the 9.14 port (Phase 9), numbers not reused:
+Retired by the 9.14 port, numbers not reused:
 
 | # | File | Why it is gone |
 |---|------|----------------|
@@ -407,7 +410,7 @@ Retired by the 9.14 port (Phase 9), numbers not reused:
 
 Plus:
 - No libffi tarball repack from 9.14 on - libffi 3.5.2 fixed the Mach-O CFI
-  construct that broke 3.4.6 (Phase 9).
+  construct that broke 3.4.6.
 - `cross-compiler/host-fix-rts-darwin.sh` was deleted by the 9.14 port; the
-  underlying flag was removed upstream in GHC 9.12.1 (Phase 7, corrected in
-  Phase 9).
+  underlying flag was removed upstream in GHC 9.12.1 (Phase 7 said 9.10;
+  corrected in the port document).
