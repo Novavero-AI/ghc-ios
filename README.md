@@ -24,6 +24,7 @@ The work here predates this repo: it was done in nova-kit's private tree over th
 .github/workflows/cross-compiler.yml   bootstrap: source -> patched -> built -> packaged artifact
 cross-compiler/patches/                2 unified diffs, applied to ghc-9.14.1-src via patch -p1
 cross-compiler/iteration-log.md        every failure and fix, v1 onward
+cross-compiler/porting-9.14.md         the 9.14 port, derived from source before it ran
 ```
 
 ## The fixes
