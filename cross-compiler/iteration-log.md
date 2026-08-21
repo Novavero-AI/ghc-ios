@@ -34,7 +34,8 @@ reasoning that retired them is in [`porting-9.14.md`](porting-9.14.md).
 
 | Decision | Why |
 |----------|-----|
-| Apple clang via `xcrun` | The build compiler is now the same one the shipped `ios-cc` wrapper invokes at runtime. Supersedes the 9.8.4 choice of Homebrew LLVM, which existed only because Apple's assembler rejected libffi 3.4.6's aarch64 CFI. |
+| Apple clang via `xcrun` | The build compiler is now the same one the shipped `ios-cc` wrapper invokes at runtime. Supersedes the 9.8.4 choice of Homebrew LLVM, which was adopted on the belief that Apple's assembler rejected libffi 3.4.6's aarch64 CFI - a misdiagnosis, since 3.4.6 fails identically on both assemblers. |
+| Deployment target via `bootstrap_llvm_target` | `GHC_LLVM_TARGET` builds a versionless `arm64-apple-ios`, and clang's default for that is iOS 7, which has no native thread-local storage. `bootstrap_llvm_target` is read by `GHC_LLVM_TARGET_SET_VAR` and assigned by nothing in the GHC tree, so pinning it there makes `default.target`, the bindist configure and the shipped settings correct by construction. Naming the target in `CONF_CC_OPTS_STAGE2` as well duplicates it, which is what breaks the RTS configure (v45). |
 | `+native_bignum` flavour | GMP is not available on iOS. Pure Haskell bignum backend, zero external deps. |
 | `--flags=-libm --flags=-libdl` | On iOS, `libm` and `libdl` are part of `libSystem` - no standalone libraries exist. GHC's `rts.cabal` uses flag conditionals for these. |
 | `-D_DARWIN_C_SOURCE` | iOS needs this for POSIX extensions like `pthread_setname_np`. |
