@@ -173,12 +173,17 @@ jobs:
           # reads it. Passing the iOS flags as STAGE1 would be accepted
           # silently and then dropped on the floor.
           #
-          # The versioned --target must be INSIDE this value:
-          # configure prepends its own derived, unversioned
-          # --target=arm64-apple-ios, and clang takes the last target
-          # flag, so the versioned one has to land after it. Without a
-          # deployment version newer clang assumes an iOS floor with no
-          # thread-local storage and refuses the threaded RTS (log v38).
+          # These values carry ONLY the defines. The target comes from
+          # bootstrap_llvm_target below, which FP_CC_SUPPORTS_TARGET
+          # injects, and the sysroot comes from the /tmp/ios-cc wrapper,
+          # which passes -isysroot on every invocation. Naming either one
+          # here as well is what broke v45: hadrian flattens this list
+          # into a single --configure-option=CFLAGS= string for the RTS's
+          # build-type: Configure package, and includes the whole set
+          # TWICE. -isysroot is the only two-token flag in it, so the
+          # duplicated pair is the one thing that can lose its argument -
+          # clang then read --target= as the sysroot and treated the
+          # orphaned SDK path as a second input file.
           #
           # -Ddarwin_HOST_OS: the RTS gates its Mach code paths on this
           # macro. 9.14 generates ghcplatform.h from rts/configure's own
@@ -214,8 +219,8 @@ jobs:
             AR=$(xcrun --sdk iphoneos -f ar) \
             RANLIB=$(xcrun --sdk iphoneos -f ranlib) \
             STRIP=$(xcrun --sdk iphoneos -f strip) \
-            CONF_CC_OPTS_STAGE2="--target=$IOS_TRIPLE -isysroot $IOS_SDK -D_DARWIN_C_SOURCE -Ddarwin_HOST_OS" \
-            CONF_GCC_LINKER_OPTS_STAGE2="-isysroot $IOS_SDK -L$IOS_SDK/usr/lib"
+            CONF_CC_OPTS_STAGE2="-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS" \
+            CONF_GCC_LINKER_OPTS_STAGE2="-L$IOS_SDK/usr/lib"
 
           # configure is authoritative for the target description
           # (--enable-ghc-toolchain defaults to NO in 9.14; ghc-toolchain

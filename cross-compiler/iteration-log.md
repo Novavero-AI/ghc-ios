@@ -11,11 +11,11 @@ Phases 1-8 built and maintained the toolchain on GHC 9.8.4. Phase 9 ports it to
 and is kept verbatim as history: where a 9.8.4-era statement no longer holds for
 9.14, Phase 9 says so rather than editing the original entry.
 
-Nobody had documented a working GHC 9.8 iOS cross-compiler build from scratch.
-This log records every failure and fix: the original bootstrap iterations
-(v1-v37), then the maintenance entries that keep the build green on newer
-Xcode images (v38+). Commit hashes in v1-v37 reference nova-kit's private
-tree, where this work originally lived; from v38 onward every run is in
+No prior GHC iOS cross-compiler published its failures. This log is that
+record: the original bootstrap iterations (v1-v37), then the maintenance
+entries that keep the build green on newer Xcode images (v38+). v1-v37
+were run out of nova-kit's private tree, where this work originally
+lived; from v38 onward every run is in
 this repo's public Actions history, and the whole thing is reproducible
 by dispatching the workflow. Release tags continue this numbering, but
 only compiler-build failures get entries - releases v43 and v44 have no
@@ -49,21 +49,21 @@ reasoning that retired them is in Phase 9.
 Getting the basic cross-compiler pipeline working: source download, boot GHC,
 alex/happy, configure flags, CC/CXX wrapper scripts.
 
-**v1** `7bc2d6a` - alex/happy install path conflicts. Fix: install outside repo dir.
+**v1** - alex/happy install path conflicts. Fix: install outside repo dir.
 
-**v2** `924019b` - Wrong working dirs, missing SDK flags. Fix: proper paths, `--target=aarch64-apple-ios`.
+**v2** - Wrong working dirs, missing SDK flags. Fix: proper paths, `--target=aarch64-apple-ios`.
 
-**v3** `5759760` - SDL2 not found (the early combined CI also built the framework's since-removed desktop SDL2 shell - never a GHC dependency), `./boot` fails on pre-booted tarball. Fix: install SDL2, skip boot.
+**v3** - SDL2 not found (the early combined CI also built the framework's since-removed desktop SDL2 shell - never a GHC dependency), `./boot` fails on pre-booted tarball. Fix: install SDL2, skip boot.
 
-**v4** `b73c014` - Obsolete `--with-clang` flag rejected. Fix: use `CC=` instead.
+**v4** - Obsolete `--with-clang` flag rejected. Fix: use `CC=` instead.
 
-**v5** `0de7b24` - Configure misparses inline CC flags. Fix: wrapper script that embeds `-target` and `-isysroot`.
+**v5** - Configure misparses inline CC flags. Fix: wrapper script that embeds `-target` and `-isysroot`.
 
-**v6** `9741c6d` - Missing CXX wrapper, heredoc whitespace, isysroot not passed. Fix: add CXX wrapper, fix heredoc.
+**v6** - Missing CXX wrapper, heredoc whitespace, isysroot not passed. Fix: add CXX wrapper, fix heredoc.
 
-**v7** `baa3bb5` - `perf-cross` flavour doesn't exist in GHC 9.8. Fix: use `quick` flavour.
+**v7** - `perf-cross` flavour doesn't exist in GHC 9.8. Fix: use `quick` flavour.
 
-**v8** `4c53e9e` - LD path not set (the old combined CI also shuffled framework modules here - not GHC work). Fix: add LD path.
+**v8** - LD path not set (the old combined CI also shuffled framework modules here - not GHC work). Fix: add LD path.
 
 ---
 
@@ -72,19 +72,19 @@ alex/happy, configure flags, CC/CXX wrapper scripts.
 GHC's RTS links against `libm`, `libdl`, and GMP. None exist as standalone
 libraries on iOS.
 
-**v9** `6e9276a` - RTS link fails: `-lm not found`. Attempt: pass iOS SDK lib path.
+**v9** - RTS link fails: `-lm not found`. Attempt: pass iOS SDK lib path.
 Result: **Failed** - `libm.tbd` exists but isn't a real archive on iOS.
 
-**v10** `f29957e` - Attempt: create stub `.a` archives for libm/libdl.
+**v10** - Attempt: create stub `.a` archives for libm/libdl.
 Result: **Failed** - Hadrian special-cases RTS configure, ignores `--extra-lib-dirs`.
 
-**v11** `d77582b` - Attempt: sed patch `rts.cabal.in` to remove libm/libdl.
+**v11** - Attempt: sed patch `rts.cabal.in` to remove libm/libdl.
 Result: **Failed** - fragile, breaks on rebuild.
 
-**v12** `db54366` - `--flags=-libm --flags=-libdl` via Hadrian's cabal configure opts.
+**v12** - `--flags=-libm --flags=-libdl` via Hadrian's cabal configure opts.
 Result: **Passed RTS link!** New error: `__GNU_MP_VERSION not defined` (GMP).
 
-**v13** `494c3db` - `+native_bignum` flavour (pure Haskell bignum, no GMP dependency).
+**v13** - `+native_bignum` flavour (pure Haskell bignum, no GMP dependency).
 Result: **Passed bignum!** New error: libffi aarch64 assembly.
 
 ---
@@ -95,28 +95,28 @@ libffi's `aarch64/sysv.S` uses CFI directives with arithmetic expressions.
 Apple's Xcode clang rejects these. Required switching to Homebrew LLVM clang
 and then patching the libffi configure to disable CFI entirely.
 
-**v14** `2f22b3c` - Attempt: use upstream system libffi instead of bundled.
+**v14** - Attempt: use upstream system libffi instead of bundled.
 Result: **Failed** - version/ABI mismatch.
 
-**v15** `f143082` - Switch to Homebrew LLVM clang (not Apple Xcode clang).
+**v15** - Switch to Homebrew LLVM clang (not Apple Xcode clang).
 Result: **Partial** - assembly parses, but libffi configure still enables broken CFI.
 
-**v16** `bb36193` - Attempt: patch `aarch64/sysv.S` source directly.
+**v16** - Attempt: patch `aarch64/sysv.S` source directly.
 Result: **Failed** - Hadrian re-extracts from tarball, overwrites patches.
 
-**v17** `5a4236c` - Attempt: disable CFI at build level.
+**v17** - Attempt: disable CFI at build level.
 Result: **Failed** - wrong approach, configure re-enables.
 
-**v18** `d7b5da6` - Attempt: find `fficonfig.h` in build subdir.
+**v18** - Attempt: find `fficonfig.h` in build subdir.
 Result: **Failed** - wrong path.
 
-**v19** `da7b4d4` - Attempt: pass iOS libffi to Stage 1 only.
+**v19** - Attempt: pass iOS libffi to Stage 1 only.
 Result: **Failed** - Stage 0/1 conflict.
 
-**v20** `ca08993` - Attempt: restore macOS libffi for Stage 0.
+**v20** - Attempt: restore macOS libffi for Stage 0.
 Result: **Failed** - still conflicts.
 
-**v21** `ae782fb` - Drop `--with-system-libffi`, let Hadrian build native for both stages.
+**v21** - Drop `--with-system-libffi`, let Hadrian build native for both stages.
 Result: **Failed** - bundled libffi configure still enables CFI.
 
 ---
@@ -126,20 +126,20 @@ Result: **Failed** - bundled libffi configure still enables CFI.
 Key insight: Hadrian extracts from `libffi-tarballs/libffi-3.4.6.tar.gz` on
 every build attempt. Must patch the tarball itself.
 
-**v22** `7f4f393` - Patch bundled libffi configure in extracted source, two-pass fallback.
+**v22** - Patch bundled libffi configure in extracted source, two-pass fallback.
 Result: **Failed** - Hadrian overwrites with fresh tarball extract.
 
-**v23** `a6c9853` - **Patch the tarball directly.** Extract -> sed -> repackage.
+**v23** - **Patch the tarball directly.** Extract -> sed -> repackage.
 Target: `HAVE_AS_CFI_PSEUDO_OP`.
 Result: **Failed** - that is the C `#define` configure emits, not the cache variable the test consults.
 
-**v24** `e42d460` - Try `libffi_cv_as_cfi_pseudo_op` (autoconf convention).
+**v24** - Try `libffi_cv_as_cfi_pseudo_op` (autoconf convention).
 Result: **Failed** - still wrong variable name.
 
-**v25** `d5815f1` - Debug: grep the actual configure script for the CFI variable.
+**v25** - Debug: grep the actual configure script for the CFI variable.
 Result: Found it - `gcc_cv_as_cfi_pseudo_op` (libffi uses GCC-style naming).
 
-**v26** `e4fc950` - `gcc_cv_as_cfi_pseudo_op=no` in patched tarball.
+**v26** - `gcc_cv_as_cfi_pseudo_op=no` in patched tarball.
 Result: **Passed libffi!** New error: `pthread_setname_np` undeclared.
 
 ---
@@ -150,23 +150,23 @@ iOS is Darwin but GHC doesn't know that for cross targets. RTS code paths
 need Darwin-specific defines and headers, but some Darwin APIs (`mach_vm.h`)
 are blocked on iOS.
 
-**v27** `8c7a498` - `pthread_setname_np` undeclared. Fix: `-D_DARWIN_C_SOURCE` in `CONF_CC_OPTS_STAGE1`.
+**v27** - `pthread_setname_np` undeclared. Fix: `-D_DARWIN_C_SOURCE` in `CONF_CC_OPTS_STAGE1`.
 Result: **Passed pthread!** New error: RTS missing darwin code paths entirely.
 
-**v28** `b918934` - RTS compiled without any Darwin code paths. Fix: `-Ddarwin_HOST_OS`.
+**v28** - RTS compiled without any Darwin code paths. Fix: `-Ddarwin_HOST_OS`.
 Result: **Passed most of RTS!** New error: `mach_vm.h` has `#error` on line 1 for iOS.
 
-**v29** `45d240e` - `ReportMemoryMap.c` includes `mach_vm.h` which is blocked on iOS.
+**v29** - `ReportMemoryMap.c` includes `mach_vm.h` which is blocked on iOS.
 Attempt: guard with `!TARGET_OS_IPHONE`.
 Result: **Failed** - `TARGET_OS_IPHONE` needs `#include <TargetConditionals.h>`.
 Without the include, preprocessor treats it as `0`, so `!0 = 1`, guard passes,
 darwin mach_vm block still compiles.
 
-**v30** `f1fb607` - Use `!defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)` instead.
+**v30** - Use `!defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)` instead.
 Clang built-in when targeting iOS - no includes needed.
 Result: **Failed** - sed matched `#if` (line 17) but missed `#elif` (line 75). The verify grep was also still checking the old macro name.
 
-**v31** `32dab87` - Patch BOTH darwin_HOST_OS guards in ReportMemoryMap.c (`#if` on line 17 and `#elif` on line 75). Fix verify to check for new macro and require 2 matches.
+**v31** - Patch BOTH darwin_HOST_OS guards in ReportMemoryMap.c (`#if` on line 17 and `#elif` on line 75). Fix verify to check for new macro and require 2 matches.
 Result: **Passed ReportMemoryMap.c!** All RTS C files compiled. New error: **linker** - `ld: unknown options: -zorigin`.
 
 ---
@@ -176,7 +176,7 @@ Result: **Passed ReportMemoryMap.c!** All RTS C files compiled. New error: **lin
 RTS compilation complete. Now fixing Hadrian's build system which doesn't
 recognize iOS as an Apple platform.
 
-**v32** `4f88bf0` - `ld: unknown options: -zorigin`. GNU ld flag for RPATH `$ORIGIN` resolution - Apple's ld doesn't support `-z` flags. Root cause: Hadrian's `isOsxTarget` only matches `"darwin"`, not `"ios"`. iOS target registers as non-Apple, gets Linux linker flags.
+**v32** - `ld: unknown options: -zorigin`. GNU ld flag for RPATH `$ORIGIN` resolution - Apple's ld doesn't support `-z` flags. Root cause: Hadrian's `isOsxTarget` only matches `"darwin"`, not `"ios"`. iOS target registers as non-Apple, gets Linux linker flags.
 Fix: patch `isOsxTarget = anyTargetOs ["darwin", "ios"]` in `hadrian/src/Oracles/Setting.hs`. Also fixes `@loader_path` (macOS rpath) and `-framework` flags for iOS.
 Result: **Passed linker flags!** `@loader_path` now used correctly. New error: `ld: library 'ffi' not found`.
 
@@ -188,16 +188,16 @@ Result: **Passed libffi link!** All RTS libraries built (static + dynamic). New 
 Fix: patch Cabal's `BuildPaths.hs` in GHC source tree to add `IOS -> "dylib"`.
 Result: **Still `.so`!** Patch applied to in-tree Cabal, but Hadrian uses the **boot GHC's Cabal** (unpatched). `hadrian/cabal.project` has `packages: ./` - only includes itself.
 
-**v35** `a2d2d7c` - Same `.so` error. Root cause deeper: Hadrian is compiled with the boot GHC's Cabal, not the in-tree one. Our patch to `libraries/Cabal/` only affects Stage 0/1 libraries.
+**v35** - Same `.so` error. Root cause deeper: Hadrian is compiled with the boot GHC's Cabal, not the in-tree one. Our patch to `libraries/Cabal/` only affects Stage 0/1 libraries.
 Fix: patch `hadrian/cabal.project` to include in-tree Cabal packages + `allow-newer`, so Hadrian compiles against patched `dllExtension`. Also: `posix_spawn_file_actions_addchdir_np` unavailable on iOS (Apple marks it `__attribute__((unavailable))`). Fix: patch 005 guards the `#elif` with `!defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)`.
 Also: replaced all sed-based patches with proper unified diff `.patch` files in `cross-compiler/patches/`. Applied via `patch -p1`.
 Result: **Build with Hadrian PASSED! (36 min)** Install step failed: `Missing (or bad) C libraries: m, dl`.
 
-**v36** `84e7e43` - Install step fails: `Missing (or bad) C libraries: m, dl`. Hadrian doesn't persist CLI settings between invocations. The build step passed `--flags=-libm --flags=-libdl` but the install step didn't.
+**v36** - Install step fails: `Missing (or bad) C libraries: m, dl`. Hadrian doesn't persist CLI settings between invocations. The build step passed `--flags=-libm --flags=-libdl` but the install step didn't.
 Fix: pass the same iOS flags (`--flags=-libm --flags=-libdl`, `-isysroot`, `-L` for libffi) to the install command.
 Result: **Passed -lm/-ldl!** New error: `__GNU_MP_VERSION not defined` - install step also doesn't know about `+native_bignum` flavour.
 
-**v37** `1028c15` - Install step compiles `gmp_wrappers.c` which requires GMP headers. Hadrian doesn't persist the flavour between invocations - without `+native_bignum`, it falls back to GMP bignum.
+**v37** - Install step compiles `gmp_wrappers.c` which requires GMP headers. Hadrian doesn't persist the flavour between invocations - without `+native_bignum`, it falls back to GMP bignum.
 Fix: pass `--flavour=quick+native_bignum` to the install command.
 Result: **GREEN. ALL STEPS PASSED.** Build (36 min) + Install (25 min) + Verify + Package + Upload. `aarch64-apple-ios-ghc --version` works. Artifact uploaded.
 
@@ -296,26 +296,32 @@ configuration, adapted to the new image. Cache key bumped v40 -> v41.
 
 **v42** - v41 disproved its own hypothesis: with the toolchain exports
 reverted and SDKROOT pointing at the macOS SDK, all three C++ std lib
-probes still failed. The probe section of config.log was cut off by
-the tail -150 dump (fixed this iteration: the dump now greps the
-probe region directly), but the evidence pattern identifies the
-cause: every candidate in the probe list (c++ c++abi / c++ c++abi
-pthread / c++ cxxrt) requires a linkable libc++abi, the Xcode 26
-macOS SDK no longer ships one, and the list has no plain-c++
-fallback - so the probe cannot succeed on this image with any host
-compiler. The iOS SDK still carries libc++abi, which is why the
-source-tree configure's identical probe passes minutes earlier in
-the same run.
+probes still failed. The cause was never established.
+
+This entry originally blamed a missing libc++abi in the Xcode 26
+macOS SDK. That is wrong, and the correction belongs here rather
+than buried in a later phase: MacOSX26.5.sdk ships
+`usr/lib/libc++abi.tbd`, and the probe's FIRST candidate
+(`c++ c++abi`) links cleanly against it, as does
+`c++ c++abi pthread`. Only `c++ cxxrt` fails, and cxxrt is a
+FreeBSD library that was never expected on Darwin. So the probe had
+a working candidate available and still failed, for a reason this
+log does not know. The one gap in the check: it was run against
+Xcode 26.5 locally, while the failing runs used the runner's
+Xcode 26.6, whose macOS SDK sits behind an unversioned symlink.
 
 Fix: pre-seed the probe's documented escape hatch instead of fighting
 it - export CXX_STD_LIB_LIBS="c++" (with empty LIB_DIRS and
 DYN_LIB_DIRS), which fp_find_cxx_std_lib.m4 honors by skipping
-detection entirely. Plain c++ is the truthful answer on modern
-Darwin, where the ABI library is bundled into libc++. SDKROOT stays
-for the other host probes. Cache key bumped v41 -> v42. The probe's
-missing plain-c++ candidate is a GHC bug against current Apple SDKs
-(it will bite plain macOS builds on Xcode 26 too) and joins the
-upstreaming queue alongside the patches.
+detection entirely. Plain c++ is a truthful answer on Darwin:
+linking `-lc++` alone succeeds, verified directly. SDKROOT stays for
+the other host probes. Cache key bumped v41 -> v42.
+
+This entry also used to call the probe's missing plain-c++ candidate
+a GHC bug and queue it for upstreaming. That does not follow: the
+candidate list already contains a combination that links, so a
+missing fallback is not what failed here. Nothing about this probe
+goes upstream until the actual failure is understood.
 
 Result: **GREEN. ALL STEPS PASSED.** Run 31944695895 on commit
 04b24cd: configure, full Hadrian build, install, portability patch,
@@ -325,6 +331,7 @@ on an Xcode 26 image - five iterations after the runner image drift
 began (v38 TLS floor, v39 posix_spawn branch, v40 bindist toolchain,
 v41 disproved sysroot theory, v42 pre-seeded C++ std lib). Toolchain
 published as Release v42.
+
 ---
 
 ### Phase 9 - Port to GHC 9.14.1 (August 2026)

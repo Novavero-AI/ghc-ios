@@ -12,9 +12,9 @@
 
 ---
 
-Nobody had documented a working GHC iOS cross-compiler built from scratch. This repo is that documentation in executable form: dispatch the workflow and it takes GHC 9.14.1 from source tarball to a packaged `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 static libraries.
+Every prior GHC iOS cross-compiler was a one-shot - see [Prior art](#prior-art). None was reproducible from a stock runner, App-Store-compatible, and documented failure by failure. This one is all three, in executable form: dispatch the workflow and it takes GHC 9.14.1 from source tarball to a packaged `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 static libraries.
 
-It powers [nova-kit](https://novavero.ai), our pure-Haskell iOS framework. Full write-up: [Haskell on your iPhone](https://novavero.ai/blog/haskell-on-your-iphone). Every failure on the way, with commit hashes: [`cross-compiler/iteration-log.md`](cross-compiler/iteration-log.md).
+It powers [nova-kit](https://novavero.ai), our pure-Haskell iOS framework. Full write-up: [Haskell on your iPhone](https://novavero.ai/blog/haskell-on-your-iphone). Every failure on the way: [`cross-compiler/iteration-log.md`](cross-compiler/iteration-log.md).
 
 The work here predates this repo: it was done in nova-kit's private tree over the winter of 2025-2026, reaching the first green build in March 2026 on GHC 9.8.4, and was extracted here for release. Phase 9 of the log ports it to 9.14.1, the first LTS line.
 
@@ -70,7 +70,7 @@ The output is an ARM64 static library: the app embeds it, calls `hs_init`, and r
 
 ### One thing to know before you port a downstream build
 
-GHC 9.14 reports this toolchain's target platform as **`aarch64-apple-darwin`**, not `aarch64-apple-ios`. That is correct, not a misconfiguration: GHC's configure has always folded `darwin|ios|watchos|tvos` into a single `OSDarwin` value, and 9.14 reconstructs the reported triple from that typed value instead of echoing the configure triple the way 9.8 did. The compiler still targets iOS - `LLVM target` is `arm64-apple-ios`, and the objects it emits carry the iOS platform load command.
+GHC 9.14 reports this toolchain's target platform as **`aarch64-apple-darwin`**, not `aarch64-apple-ios`. That is correct, not a misconfiguration: GHC's configure has always folded `darwin|ios|watchos|tvos` into a single `OSDarwin` value, and 9.14 reconstructs the reported triple from that typed value instead of echoing the configure triple the way 9.8 did. The compiler still targets iOS - `LLVM target` is `arm64-apple-ios15.0`, and the objects it emits carry the iOS platform load command.
 
 The consequence is downstream and silent. Cabal derives its target platform from `ghc --info`, so:
 
@@ -90,7 +90,7 @@ The original `ghc-ios` scripts (GHC 7.x era) proved this was possible before goi
 
 ## Upstreaming
 
-Several of these fixes are one-line guards that belong in GHC proper, and the C++ std lib probe's missing plain-`c++` candidate is a real bug against current Apple SDKs. If you work on GHC or Hadrian and have opinions about iOS as a target, open an issue.
+Several of these fixes are one-line guards that belong in GHC proper. The clearest is in `GHC_CONVERT_OS`: it accepts a versioned `darwin*` - its own comment reads "e.g. aarch64-apple-darwin14" - but matches `ios|watchos|tvos` exactly, so `GHC_LLVM_TARGET` drops the Apple OS version. That is harmless on macOS, where clang defaults to the SDK's version, and on iOS it silently selects clang's versionless default of iOS 7, which has no native thread-local storage. It affects iOS, tvOS and watchOS alike. If you work on GHC or Hadrian and have opinions about iOS as a target, open an issue.
 
 ## License
 
