@@ -22,6 +22,17 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 180
 
+    env:
+      # The iOS deployment floor, written ONCE. Every consumer below
+      # derives "arm64-apple-ios${IOS_MIN}" from it: the build wrappers,
+      # the LLVM triple injected into configure, the shipped wrapper, the
+      # settings normalisation, and every assertion. GHC has no concept
+      # of an Apple deployment target, so this value is the whole of our
+      # convention for one - spelling it nine times as a literal is how
+      # a floor bump silently half-lands. nova-kit mirrors the same floor
+      # in its ci.yml IOS_MIN and its nova-kit.toml ios.min-version.
+      IOS_MIN: '15.0'
+
     steps:
       # Actions are pinned to commit SHAs (tag in the trailing comment):
       # major tags are movable, and the publish job below holds this
@@ -105,9 +116,10 @@ jobs:
           # wrapper invokes at runtime, which was never true before.
           IOS_CC=$(xcrun --sdk iphoneos -f clang)
           IOS_CXX=$(xcrun --sdk iphoneos -f clang++)
+          IOS_TRIPLE="arm64-apple-ios${IOS_MIN}"
 
-          printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$IOS_CC" "$IOS_SDK" > /tmp/ios-cc
-          printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$IOS_CXX" "$IOS_SDK" > /tmp/ios-cxx
+          printf '#!/bin/bash\nexec %s -target %s -isysroot %s "$@"\n' "$IOS_CC" "$IOS_TRIPLE" "$IOS_SDK" > /tmp/ios-cc
+          printf '#!/bin/bash\nexec %s -target %s -isysroot %s "$@"\n' "$IOS_CXX" "$IOS_TRIPLE" "$IOS_SDK" > /tmp/ios-cxx
           chmod +x /tmp/ios-cc /tmp/ios-cxx
 
           # Verify wrappers work
@@ -152,6 +164,7 @@ jobs:
         run: |
           cd /tmp/ghc-9.14.1
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          IOS_TRIPLE="arm64-apple-ios${IOS_MIN}"
 
           # CONF_*_STAGE2, not STAGE1. In 9.14 the stage-1 (target)
           # toolchain is described by hadrian/cfg/default.target, which
@@ -160,7 +173,7 @@ jobs:
           # reads it. Passing the iOS flags as STAGE1 would be accepted
           # silently and then dropped on the floor.
           #
-          # --target=arm64-apple-ios15.0 must be INSIDE this value:
+          # The versioned --target must be INSIDE this value:
           # configure prepends its own derived, unversioned
           # --target=arm64-apple-ios, and clang takes the last target
           # flag, so the versioned one has to land after it. Without a
@@ -174,16 +187,34 @@ jobs:
           # the define is correct either way and costs nothing.
           # -D_DARWIN_C_SOURCE exposes POSIX extensions such as
           # pthread_setname_np.
+          # bootstrap_llvm_target is read by GHC_LLVM_TARGET_SET_VAR and
+          # assigned by NOTHING in the source tree, so setting it here is
+          # the supported way to override the computed LLVM triple - the
+          # same shape as the CXX_STD_LIB_LIBS escape hatch below.
+          # GHC_LLVM_TARGET builds a VERSIONLESS arm64-apple-ios, but an
+          # Apple deployment target is part of the triple, not a flag.
+          # Pinning it at the origin makes every consumer correct by
+          # construction: default.target, the bindist configure (whose
+          # FP_CC_SUPPORTS_TARGET injects --target=$LlvmTarget into the
+          # SHIPPED cc/cxx/link flags), and the settings file. Without
+          # it, clang takes the injected versionless triple as the last
+          # -target and drops the floor to its default of iOS 7 - no
+          # thread-local storage, LC_VERSION_MIN_IPHONEOS 7.0 instead of
+          # LC_BUILD_VERSION. It is NOT used to look up llvm-targets in
+          # any way that regresses: that table is keyed on
+          # aarch64-apple-ios while this value has always been
+          # arm64-apple-ios, so the lookup missed already.
           ./configure \
             --target=aarch64-apple-ios \
             --prefix=$HOME/ghc-ios \
+            bootstrap_llvm_target="$IOS_TRIPLE" \
             CC=/tmp/ios-cc \
             CXX=/tmp/ios-cxx \
             LD=$(xcrun --sdk iphoneos -f ld) \
             AR=$(xcrun --sdk iphoneos -f ar) \
             RANLIB=$(xcrun --sdk iphoneos -f ranlib) \
             STRIP=$(xcrun --sdk iphoneos -f strip) \
-            CONF_CC_OPTS_STAGE2="--target=arm64-apple-ios15.0 -isysroot $IOS_SDK -D_DARWIN_C_SOURCE -Ddarwin_HOST_OS" \
+            CONF_CC_OPTS_STAGE2="--target=$IOS_TRIPLE -isysroot $IOS_SDK -D_DARWIN_C_SOURCE -Ddarwin_HOST_OS" \
             CONF_GCC_LINKER_OPTS_STAGE2="-isysroot $IOS_SDK -L$IOS_SDK/usr/lib"
 
           # configure is authoritative for the target description
@@ -191,8 +222,14 @@ jobs:
           # only runs as a non-fatal validation diff). Assert the flags
           # actually landed in default.target rather than trusting that
           # an unrecognized variable was honoured.
-          grep -q 'arm64-apple-ios15.0' hadrian/cfg/default.target \
+          grep -qF "$IOS_TRIPLE" hadrian/cfg/default.target \
             || { echo "CONF_CC_OPTS_STAGE2 did not reach default.target"; exit 1; }
+          # And that the versioned triple reached the LLVM target field
+          # specifically - that is the one that propagates into the
+          # shipped flags. Failing here costs two minutes; failing on the
+          # artifact costs the whole run.
+          grep -qF "tgtLlvmTarget = \"$IOS_TRIPLE\"" hadrian/cfg/default.target \
+            || { echo "bootstrap_llvm_target was not honoured"; grep tgtLlvmTarget hadrian/cfg/default.target; exit 1; }
 
       - name: Build with Hadrian
         if: steps.cache-ghc.outputs.cache-hit != 'true'
@@ -204,7 +241,11 @@ jobs:
           # - native bignum backend (no GMP on iOS)
           # - disable libm/libdl flags (part of libSystem on iOS)
           # - add libffi library path (Hadrian copies headers but not lib to rts/build)
-          hadrian/build -j --flavour=quick+native_bignum \
+          # --docs=none: the plain build does not need it (topLevelTargets has
+          # no doc target), but Install does, and hadrian persists NOTHING
+          # between invocations - so the two commands must agree or the
+          # install re-plans with a different target set.
+          hadrian/build -j --flavour=quick+native_bignum --docs=none \
             "stage1.*.ghc.link.opts += -optl-isysroot -optl$IOS_SDK" \
             "stage1.rts.cabal.configure.opts += --flags=-libm --flags=-libdl" \
             "stage1.rts.ghc.link.opts += -optl-L_build/stage1/libffi/build/inst/lib"
@@ -223,8 +264,11 @@ jobs:
           # probes natively. Do NOT hand it the iOS cross wrappers: with
           # no explicit --host, autoconf compiles a test program and RUNS
           # it, and an arm64-ios binary cannot execute on the macOS host
-          # ("cannot run C compiled programs"). 9.14 adds a second reason:
-          # MOVE_TO_FLAGS word-splits CC/CXX into the flags variables.
+          # ("cannot run C compiled programs"). Relatedly, MOVE_TO_FLAGS
+          # requires CC to be a single path with no embedded arguments -
+          # it exists to undo autoconf 2.70+ emitting CC="clang -std=gnu11"
+          # - which is why the iOS flags live in a wrapper script rather
+          # than being packed into CC.
           export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 
           # The C++ std lib probe (fp_find_cxx_std_lib.m4) only tries
@@ -239,8 +283,19 @@ jobs:
           export CXX_STD_LIB_LIB_DIRS=""
           export CXX_STD_LIB_DYN_LIB_DIRS=""
 
+          # --docs=none is LOAD-BEARING here, unlike in the build step.
+          # 'install' needs 'binary-dist-dir', and Rules/BinaryDist.hs
+          # unconditionally adds the "docs" phony to its target list - the
+          # CrossCompiling flag next to it gates only iserv, not docs. The
+          # default doc set is [minBound..maxBound], which includes
+          # SphinxPDFs, and sphinx-build/xelatex/makeindex/makeinfo are NOT
+          # in Builder.hs's isOptional list, so a stock macos-latest image
+          # hard-errors with 'Non optional builder "sphinx-build" is not
+          # specified'. This is new in 9.14: 9.8.4's binary-dist-dir rule
+          # had no doc target, which is why the 9.8.4 artifact ships an
+          # empty share/doc and no green run ever exercised this path.
           hadrian/build install --prefix=$HOME/ghc-ios \
-            --flavour=quick+native_bignum \
+            --flavour=quick+native_bignum --docs=none \
             "stage1.*.ghc.link.opts += -optl-isysroot -optl$IOS_SDK" \
             "stage1.rts.cabal.configure.opts += --flags=-libm --flags=-libdl" \
             "stage1.rts.ghc.link.opts += -optl-L_build/stage1/libffi/build/inst/lib" \
@@ -285,9 +340,16 @@ jobs:
           BIN_DIR="$GHC_ROOT/bin"
           test -d "$BIN_DIR" || { echo "expected wrapper dir $BIN_DIR to exist"; exit 1; }
 
+          # The deployment target is defined ONCE here and used in two
+          # places: the wrapper below and the settings flags in step 3.
+          # Both must agree - see the note in step 3 for why one position
+          # is not enough.
+          IOS_TRIPLE="arm64-apple-ios${IOS_MIN}"
+
           # 1. Create portable ios-cc wrapper (uses xcrun for dynamic SDK)
-          printf '#!/bin/sh\nexec xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 "$@"\n' > "$BIN_DIR/ios-cc"
-          chmod +x "$BIN_DIR/ios-cc"
+          printf '#!/bin/sh\nexec xcrun --sdk iphoneos clang -target %s "$@"\n' "$IOS_TRIPLE" > "$BIN_DIR/ios-cc"
+          printf '#!/bin/sh\nexec xcrun --sdk iphoneos clang++ -target %s "$@"\n' "$IOS_TRIPLE" > "$BIN_DIR/ios-cxx"
+          chmod +x "$BIN_DIR/ios-cc" "$BIN_DIR/ios-cxx"
 
           # 2. Patch settings to use $topdir-relative wrappers.
           #    "ld command" is NOT in this list: 9.14 removed the key, and
@@ -300,25 +362,66 @@ jobs:
           SETTINGS="$GHC_LIB/settings"
           sed -i '' \
             -e 's|"C compiler command", "[^"]*"|"C compiler command", "$topdir/../bin/ios-cc"|' \
+            -e 's|"C++ compiler command", "[^"]*"|"C++ compiler command", "$topdir/../bin/ios-cxx"|' \
             -e 's|"Haskell CPP command", "[^"]*"|"Haskell CPP command", "$topdir/../bin/ios-cc"|' \
             -e 's|"CPP command", "[^"]*"|"CPP command", "$topdir/../bin/ios-cc"|' \
             -e 's|"C-- CPP command", "[^"]*"|"C-- CPP command", "$topdir/../bin/ios-cc"|' \
             -e 's|"cross compiling", "NO"|"cross compiling", "YES"|' \
             "$SETTINGS"
 
-          # 3. Verify. Each key is asserted individually: a single grep -E
+          # 3. Pin the deployment target in the settings FLAGS keys.
+          #    The bindist configure (which hadrian runs with nothing but
+          #    --prefix, see Rules/BinaryDist.hs installTo) calls
+          #    FP_CC_SUPPORTS_TARGET. That probes the host cc with
+          #    --target=$LlvmTarget and, when the probe succeeds - it does
+          #    on current Xcode - PREPENDS a versionless
+          #    "--target=arm64-apple-ios" to the STAGE2 cc/cxx/link opts,
+          #    which FP_SETTINGS then writes into these three keys.
+          #    GHC passes them AFTER the wrapper's own -target and clang
+          #    honours the LAST one, so the floor would silently collapse
+          #    to clang's versionless default of iOS 7: no thread-local
+          #    storage, and LC_VERSION_MIN_IPHONEOS in place of
+          #    LC_BUILD_VERSION. Normalising every occurrence to the
+          #    versioned triple makes the ordering irrelevant instead of
+          #    load-bearing - both positions now say the same thing. The
+          #    wrapper keeps its copy because the three CPP keys point at
+          #    ios-cc and their flags carry no target of their own.
+          sed -i '' -e 's|--target=arm64-apple-ios[0-9.]* *||g' "$SETTINGS"
+          for key in "C compiler flags" "C++ compiler flags" "C compiler link flags"; do
+            sed -i '' -e "s|\"$key\", \"|\"$key\", \"--target=$IOS_TRIPLE |" "$SETTINGS"
+          done
+
+          # 4. Verify. Each key is asserted individually: a single grep -E
           #    with alternatives exits 0 when ANY one matches, which would
           #    hide a key that disappeared in a future GHC.
           for key in "C compiler command" "Haskell CPP command" "CPP command" "C-- CPP command"; do
             grep -qF "\"$key\", \"\$topdir/../bin/ios-cc\"" "$SETTINGS" \
               || { echo "settings key not rewritten: $key"; grep "\"$key\"" "$SETTINGS"; exit 1; }
           done
+          grep -qF '"C++ compiler command", "$topdir/../bin/ios-cxx"' "$SETTINGS" \
+            || { echo "settings key not rewritten: C++ compiler command"; grep '"C++ compiler command"' "$SETTINGS"; exit 1; }
           grep -qF '"cross compiling", "YES"' "$SETTINGS" \
             || { echo "cross compiling flag not set"; exit 1; }
+          for key in "C compiler flags" "C++ compiler flags" "C compiler link flags"; do
+            grep -qF "\"$key\", \"--target=$IOS_TRIPLE " "$SETTINGS" \
+              || { echo "deployment target not pinned in: $key"; grep "\"$key\"" "$SETTINGS"; exit 1; }
+          done
+          # Nothing may name a versionless iOS target any more - that is
+          # the exact construct that silently drops the floor to iOS 7.
+          if grep -E -- '--target=arm64-apple-ios([^0-9]|$)' "$SETTINGS"; then
+            echo "settings still carries a versionless iOS target"; exit 1
+          fi
+          # The wrapper and the settings flags must name the SAME target.
+          for w in ios-cc ios-cxx; do
+            grep -qF -- "-target $IOS_TRIPLE " "$BIN_DIR/$w" \
+              || { echo "wrapper target does not match \$IOS_TRIPLE: $w"; exit 1; }
+          done
           echo "=== ios-cc ==="
           cat "$BIN_DIR/ios-cc"
+          echo "=== ios-cxx ==="
+          cat "$BIN_DIR/ios-cxx"
 
-          # 4. No build-machine path may survive into settings. Nothing
+          # 5. No build-machine path may survive into settings. Nothing
           #    writes /tmp/ios today; a future GHC recording extra
           #    toolchain fields must not ship a broken settings unnoticed.
           if grep -qF '/tmp/ios' "$SETTINGS"; then
@@ -344,7 +447,7 @@ jobs:
           # flags. Asserting the exact string keeps a future change here
           # loud rather than silent.
           ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep '("Target platform","aarch64-apple-darwin")'
-          ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep '("LLVM target","arm64-apple-ios")'
+          ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep -F "(\"LLVM target\",\"arm64-apple-ios${IOS_MIN}\")"
 
           # Smoke test: compile a static library with the exact toolchain
           # a user downloads - the xcrun-based ios-cc wrapper the
@@ -369,6 +472,13 @@ jobs:
           if grep -q 'platform 1' "$SMOKE/loadcmds.txt"; then
             echo "smoke object contains a macOS-platform member"; exit 1
           fi
+          # And prove the DEPLOYMENT FLOOR, not just the platform. A
+          # versionless --target reaching the shipped cc flags yields
+          # LC_VERSION_MIN_IPHONEOS 7.0 with no LC_BUILD_VERSION at all,
+          # which is iOS but far below the iOS 15 floor the RTS needs for
+          # native thread-local storage.
+          grep -qF "minos ${IOS_MIN}" "$SMOKE/loadcmds.txt" \
+            || { echo "smoke object does not carry the iOS ${IOS_MIN} floor"; grep -A 4 'VERSION' "$SMOKE/loadcmds.txt" | head -20; exit 1; }
           echo "smoke test OK: arm64 iOS static library with exported symbol"
 
       - name: Package

@@ -502,8 +502,11 @@ it runs only as a non-fatal validation diff, so configure remains authoritative.
   with no plain-`c++` fallback, and current macOS SDKs still ship no linkable
   libc++abi. The `CXX_STD_LIB_LIBS` escape hatch still short-circuits detection.
 - The v41 rule still applies: the bindist configure is a HOST configure and must
-  not be handed the cross toolchain. 9.14 adds a second reason - `MOVE_TO_FLAGS`
-  now word-splits `CC`/`CXX` into the flags variables.
+  not be handed the cross toolchain. A related constraint, stated correctly here
+  after an earlier draft got it backwards: `MOVE_TO_FLAGS` exists to undo
+  autoconf 2.70+ emitting `CC="clang -std=gnu11"`, so `CC` must be a single path
+  with no embedded arguments. That is why the iOS flags live in a wrapper script
+  rather than being packed into `CC`.
 - **The portability step needed repair, not a version bump.** The wrapper
   directory moved: 9.8 wrote into `$topdir/bin`, but hadrian no longer produces
   a `lib/bin` at all and 9.14's settings refer to `$topdir/../bin` (the sibling
@@ -521,9 +524,9 @@ it runs only as a non-fatal validation diff, so configure remains authoritative.
   and would therefore hide a key that vanished in a future GHC.
 - The verify gate no longer proves iOS-ness via the platform triple, since that
   now says `darwin`. It asserts the exact new triple (so a future change is
-  loud), asserts `LLVM target` is `arm64-apple-ios`, and checks the smoke
-  object's Mach-O load commands directly: `platform 2` present, `platform 1`
-  absent. That is a stronger check than the string it replaces - it proves the
+  loud), asserts `LLVM target` is `arm64-apple-ios15.0` (see the deployment
+  target section below), and checks the smoke object's Mach-O load commands
+  directly: `platform 2` present, `platform 1` absent, `minos 15.0` set. That is a stronger check than the string it replaces - it proves the
   shipped wrapper produced iOS objects rather than that a settings field says so.
 
 #### host-fix-rts-darwin.sh retired, with a correction
@@ -546,6 +549,149 @@ gated on `case $target in *-darwin)`, which `aarch64-apple-ios` does not match,
 so the cross-compiler's linker opts get neither. Phase 7 records that nova-kit's
 device link bypasses the cross GHC's link path entirely, which would hide it.
 Whether it produces real noise downstream is unverified.
+
+#### The versionless LLVM triple, and clang's iOS 7 default
+
+Found before v44 ran, by tracing the flag path through the bindist rather
+than by a build failure.
+
+`installTo` (`hadrian/src/Rules/BinaryDist.hs`) runs the bindist's own
+configure with nothing but `--prefix`. That configure calls
+`FP_CC_SUPPORTS_TARGET`, which probes the host cc with
+`--target=$LlvmTarget` and, on success, PREPENDS `--target=$LlvmTarget` to
+`CONF_CC_OPTS_STAGE2` and `CONF_GCC_LINKER_OPTS_STAGE2`. `FP_SETTINGS`
+copies those verbatim into `SettingsCCompilerFlags` and
+`SettingsCCompilerLinkFlags`, and `hadrian/bindist/Makefile` writes them
+into the installed `settings`. The probe succeeds on Xcode 26.5.
+
+`LlvmTarget` is versionless: `GHC_LLVM_TARGET` assembles
+`$cpu-$vendor-$os`, and the OS half comes from `GHC_CONVERT_OS`, which
+folds `ios` to a bare `ios`. GHC passes `C compiler flags` AFTER the
+wrapper's own `-target arm64-apple-ios15.0`, and clang honours the LAST
+`-target`, so the shipped compiler would have built everything at clang's
+versionless default of iOS 7.0. Measured directly on Xcode 26.5:
+
+    -target arm64-apple-ios15.0                           ->  LC_BUILD_VERSION, platform 2, minos 15.0
+    -target arm64-apple-ios15.0 --target=arm64-apple-ios  ->  LC_VERSION_MIN_IPHONEOS, version 7.0
+
+There is no native thread-local storage at that floor, so this is v38's
+failure class resurfacing in the SHIPPED toolchain rather than in the
+build. The verify gate greps for `platform 2`, which an iOS 7 object does
+not carry at all, so the run would have died at its very last step
+reporting "smoke object is not an iOS build" - true, and pointing nowhere
+near the cause.
+
+The effect is new in 9.14. The installed 9.8.4 artifact carries
+`C compiler flags = -Qunused-arguments`, with no `--target` at all.
+
+Fixed at the origin. `bootstrap_llvm_target` is READ by
+`GHC_LLVM_TARGET_SET_VAR` and ASSIGNED by nothing anywhere in the tree, so
+configure now sets it and every consumer is correct by construction:
+`default.target`, the bindist configure's injected `--target`, and the
+settings file. It does not regress the `llvm-targets` lookup - that table
+is keyed on `aarch64-apple-ios` while this value has always been
+`arm64-apple-ios`, so the lookup missed already and `-fllvm` was never
+viable on this target.
+
+Three guards on top, because an origin fix that silently stops working is
+the exact failure this entry exists to prevent:
+
+- the configure step asserts the versioned triple reached `tgtLlvmTarget`
+  in `default.target`, so a regression costs two minutes rather than the
+  whole run;
+- the packaging step normalises any `--target=arm64-apple-ios*` in the
+  three settings flags keys to the versioned form, and refuses to ship a
+  versionless one;
+- the verify gate asserts `minos` on the smoke object, not just its
+  platform. That is the assertion that would have caught this.
+
+The wrapper keeps its own copy of the versioned target rather than being
+thinned to a bare `xcrun` call: `Haskell CPP command`, `CPP command` and
+`C-- CPP command` all point at `ios-cc` and their flags keys carry no
+target of their own, so a thin wrapper would have preprocessed at clang's
+default triple.
+
+The floor itself is now a single `IOS_MIN` job variable that every
+consumer derives `arm64-apple-ios${IOS_MIN}` from. It had been spelled as
+a literal in nine places, which is how a floor bump silently half-lands.
+nova-kit mirrors the same name in its `ci.yml`.
+
+The real fix belongs upstream and is tracked in #3. `GHC_CONVERT_OS`
+already accepts a versioned `darwin*` - its own comment reads "e.g.
+aarch64-apple-darwin14" - but matches `ios|watchos|tvos` exactly, and
+`GHC_LLVM_TARGET` then drops the Apple OS version. That is harmless on
+macOS, where clang defaults to the SDK's version, and silently selects
+iOS 7 on iOS, tvOS and watchOS. GHC has no concept of an Apple deployment
+target anywhere in the tree, so the upstream change is a new option rather
+than a repair. A local patch 006 introducing one was considered and
+rejected: the release tarball ships a pre-generated `configure` (autoconf
+2.71) with these macros already inlined at five sites, so patching the m4
+is inert without regenerating it, and Homebrew's autoconf is 2.72.
+Upstream regenerates `configure` as part of its build, so the option is
+clean there and messy here.
+
+#### Docs are mandatory for `install` in 9.14, and would have killed the run
+
+Found by the pre-dispatch audit, not by a build. This one is a regression
+between 9.8.4 and 9.14.1 and is invisible to every previous green run.
+
+`hadrian/build install` runs `phony "install"`, which needs
+`binary-dist-dir`. In 9.14 that rule builds its target list as
+`lib_exe_targets ++ doc_target ++ other_targets` with
+`doc_target = ["docs"]` UNCONDITIONALLY
+(`hadrian/src/Rules/BinaryDist.hs:162,165,168`). The `CrossCompiling` flag
+read three lines above it gates only `iserv_targets`, not docs. The
+default doc set is `Set.fromList [minBound..maxBound]`
+(`hadrian/src/CommandLine.hs:58`) over
+`Haddocks | SphinxHTML | SphinxPDFs | SphinxMan | SphinxInfo`, and `quick`
+does not override `ghcDocs`. `sphinx-build`, `xelatex`, `makeindex` and
+`makeinfo` are NOT in `Builder.hs`'s `isOptional` list (only Objdump,
+Happy, Alex, Ranlib and JsCpp are), so an unset tool is a hard
+`Non optional builder "..." is not specified` error rather than a skip.
+configure's `BUILD_SPHINX_HTML/PDF/INFO` are never plumbed into
+`hadrian/cfg/system.config.in`, so there is no graceful degradation path.
+
+A stock `macos-latest` image ships no Sphinx and no TeX Live, so the
+Install step would have aborted after the whole ~45 minute build, before
+`installTo` ever ran the bindist configure - which also means the step's
+`find _build/bindist -name config.log` diagnostic would have printed
+nothing, and the cache Save step that sits after Install would have been
+skipped. Every retry pays the full build again.
+
+9.8.4's `binary-dist-dir` rule had no doc target at all; its body was
+`need (lib_targets ++ map snd (bin_targets ++ iserv_targets))`. The
+corroboration is in the shipped artifact: `~/ghc-ios/share/doc/ghc-9.8.4/`
+is empty, there is no `ghc.1`, and every package doc dir contains only
+LICENSE. No green 9.8.4 run ever built a doc target, so the workflow's
+history says nothing about whether this image can.
+
+Fixed by passing `--docs=none` to BOTH hadrian invocations
+(`readDocsArg "none"` sets the target set to empty, so
+`Rules/Documentation.hs` needs nothing and the `docs` phony is a satisfied
+no-op). It is only load-bearing on `install` - the plain build's
+`topLevelTargets` has no doc target - but hadrian persists nothing between
+invocations, so the two commands have to agree or install re-plans with a
+different target set.
+
+#### The C++ command was left pointing at the host
+
+Same audit. The portability step rewrote `C compiler command` and the
+three CPP commands but not `C++ compiler command`, which the bindist
+configure fills with the host `g++`. On its own that was survivable
+because 9.8.4 shipped the same way. It stops being survivable once the
+deployment-target fix above forces `C++ compiler flags` to
+`--target=arm64-apple-ios15.0`: the settings then name a macOS compiler
+and an iOS target in the same breath, so any package with `cxx-sources`
+or `objcxx-sources` compiles iOS-targeted objects against macOS SDK
+headers. clang treats a sysroot mismatch as a warning, not an error, so
+it would have been silent.
+
+The artifact now ships an `ios-cxx` wrapper next to `ios-cc` and points
+the key at it. Scope was never nova-kit's own shell - the C, assembler,
+Obj-C and link paths all route through `pgm_c` and were already
+redirected - but the toolchain is published, and shipping a
+self-contradictory settings file is not something to leave for a consumer
+to discover.
 
 #### Open risks going into v44
 
