@@ -700,6 +700,56 @@ redirected - but the toolchain is published, and shipping a
 self-contradictory settings file is not something to leave for a consumer
 to discover.
 
+#### Every published release so far is unusable when downloaded
+
+Found by running the installed v44 release on a second machine, which
+nothing in CI had ever done.
+
+A non-relocatable bindist install writes launcher scripts into
+`<prefix>/bin`, and `mk/install_script.sh` bakes six absolute paths into
+each one: `exedir`, `executablename`, `bindir`, `libdir`, `docdir`,
+`includedir`. All six name the `--prefix` used at build time, which on
+the runner is `/Users/runner/ghc-ios`. That path exists on no other
+machine, so the first thing a downloader sees is
+
+    /Users/.../bin/aarch64-apple-ios-ghc: line 10:
+    /Users/runner/ghc-ios/lib/aarch64-apple-ios-ghc-9.8.4/bin/...:
+    No such file or directory
+
+Six wrappers, six paths each. The workflow's portability step has always
+existed to prevent exactly this - its own comment cites
+`"No such file or directory: /Users/runner/..."` as the failure it
+guards - but it only ever rewrote `lib/settings`, and the wrappers live
+outside it.
+
+Verify could not catch it. Verify runs ON the runner, where
+`/Users/runner/ghc-ios` is real, so a broken artifact passes every gate
+and uploads clean. v42, v43 and v44 all shipped this way and all report
+`9.8.4` correctly when tested in the only place they were ever tested.
+
+Nothing else leaks: a `grep -rl` over the whole installed tree finds the
+build prefix in those six scripts and nowhere else. `settings` uses
+`$topdir` and the package db is `${pkgroot}`-relative, both already
+correct.
+
+Fixed in the portability step rather than by switching the install to
+`RelocatableBuild=YES`. The relocatable mode is GHC's own mechanism and
+would avoid the wrappers entirely by installing real binaries into
+`<prefix>/bin`, but it also moves `$topdir` from
+`lib/<target>-ghc-<ver>/lib` to `lib/<target>-ghc-<ver>`, which the
+portability step, the README's documented layout and the settings
+rewriting all depend on. Deriving the prefix from the script's own
+location is confined to a step we already own, and it was verified
+against the real v44 install: relocated wrappers run `--version` and
+`ghc-pkg --version` from a prefix the toolchain was never built for,
+while the originals fail.
+
+Two guards, because the old one looked in the wrong place: the
+portability step now refuses to ship if ANY file under the install root
+names a build-machine path, and Verify copies `bin/` to a fresh prefix
+and runs the compiler from there. The second is the assertion whose
+absence let this ship three times.
+
 #### Open risks going into v45
 
 - 002/004 being droppable is a source derivation across m4, hadrian, the

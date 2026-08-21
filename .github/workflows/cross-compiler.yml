@@ -439,12 +439,43 @@ jobs:
           echo "=== ios-cxx ==="
           cat "$BIN_DIR/ios-cxx"
 
-          # 5. No build-machine path may survive into settings. Nothing
-          #    writes /tmp/ios today; a future GHC recording extra
-          #    toolchain fields must not ship a broken settings unnoticed.
-          if grep -qF '/tmp/ios' "$SETTINGS"; then
-            echo "settings still references build-machine wrappers:"
-            grep '/tmp/ios' "$SETTINGS"
+          # 5. Make the top-level bin/ wrappers relocatable.
+          #    A non-relocatable bindist install writes wrapper scripts
+          #    into <prefix>/bin with SIX absolute paths baked in by
+          #    mk/install_script.sh (exedir, executablename, bindir,
+          #    libdir, docdir, includedir), all naming the --prefix used
+          #    at build time. On the runner that is /Users/runner/ghc-ios,
+          #    which exists nowhere else, so every shipped release before
+          #    this one failed on first use with
+          #    "No such file or directory: /Users/runner/...". Verify
+          #    could not catch it: Verify runs ON the runner, where that
+          #    path is real.
+          #    The real binaries under $topdir/../bin are unaffected -
+          #    only these launcher scripts carry the prefix - so deriving
+          #    it from the script's own location is the whole fix. The
+          #    shebang is preserved rather than assumed.
+          WRAPPER_DIR=~/ghc-ios/bin
+          BUILD_PREFIX="$HOME/ghc-ios"
+          for w in "$WRAPPER_DIR"/*; do
+            [ -L "$w" ] && continue
+            head -1 "$w" | grep -q '^#!' || continue
+            grep -q "$BUILD_PREFIX" "$w" || continue
+            {
+              head -1 "$w"
+              echo 'prefix=$(cd "$(dirname "$0")/.." && pwd)'
+              tail -n +2 "$w" | sed "s|$BUILD_PREFIX|\$prefix|g"
+            } > "$w.reloc" && mv "$w.reloc" "$w" && chmod +x "$w"
+            echo "relocated $(basename "$w")"
+          done
+
+          # 6. NOTHING under the install root may name a build-machine
+          #    path. Broader than the old settings-only check on purpose:
+          #    the wrapper bug lived outside settings for three releases
+          #    precisely because nothing looked there.
+          LEAKED=$(grep -rl -e "$BUILD_PREFIX" -e '/tmp/ios' ~/ghc-ios 2>/dev/null || true)
+          if [ -n "$LEAKED" ]; then
+            echo "build-machine paths survive in the artifact:"
+            echo "$LEAKED"
             exit 1
           fi
 
@@ -498,6 +529,24 @@ jobs:
           grep -qF "minos ${IOS_MIN}" "$SMOKE/loadcmds.txt" \
             || { echo "smoke object does not carry the iOS ${IOS_MIN} floor"; grep -A 4 'VERSION' "$SMOKE/loadcmds.txt" | head -20; exit 1; }
           echo "smoke test OK: arm64 iOS static library with exported symbol"
+
+          # Relocation check. Everything above runs from the same prefix
+          # the toolchain was installed to, so a path baked in at build
+          # time still resolves here and a broken artifact looks perfect -
+          # which is exactly how v42, v43 and v44 all shipped unusable.
+          # Give the wrappers a different prefix and make them find their
+          # own installation from it. lib/ and share/ are symlinked rather
+          # than copied: what is under test is whether the launcher
+          # scripts resolve relative to themselves, and step 6 of the
+          # portability patch already proves no other file names a
+          # build-machine path.
+          RELOC=$(mktemp -d)
+          cp -R ~/ghc-ios/bin "$RELOC/bin"
+          ln -s ~/ghc-ios/lib "$RELOC/lib"
+          ln -s ~/ghc-ios/share "$RELOC/share"
+          "$RELOC/bin/aarch64-apple-ios-ghc" --version | grep '9\.14\.1' \
+            || { echo "toolchain does not run from a relocated prefix"; exit 1; }
+          echo "relocation OK: the artifact runs from a prefix it was not built for"
 
       - name: Package
         run: tar czf ghc-9.14.1-aarch64-apple-ios.tar.gz -C ~ ghc-ios
