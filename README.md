@@ -82,7 +82,7 @@ Nothing errors; you just get a differently-configured build. Grep your packages 
 
 ## Scope
 
-This is the compiler-side story. Running the GHC RTS well on a device needs three link-time overrides in the app itself: a no-op `mprotectForLinker` (iOS W^X), a memory-pressure-aware `osReserveHeapMemory` (GHC asks for 256 GB of address space; iOS grants about 1 GB), and `os_log` routing for RTS diagnostics. Those are covered in the write-up and ship as part of nova-kit's platform shell.
+This is the compiler-side story. Running the GHC RTS well on a device needs three link-time overrides in the app itself: a no-op `mprotectForLinker` (iOS W^X), a memory-pressure-aware `osReserveHeapMemory` (GHC asks for 1 TiB of address space by default; iOS grants about 1 GB), and `os_log` routing for RTS diagnostics. Those are covered in the write-up and ship as part of nova-kit's platform shell.
 
 ## Prior art
 
