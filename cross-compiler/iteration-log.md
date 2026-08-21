@@ -1,10 +1,15 @@
 # GHC iOS Cross-Compiler - Iteration Log
 
 ## Context
-Target: Build GHC 9.8.4 cross-compiler for `aarch64-apple-ios` on macOS (GitHub Actions).
+Target: Build GHC 9.14.1 cross-compiler for `aarch64-apple-ios` on macOS (GitHub Actions).
 Output: A working `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 iOS binaries.
 CI: `.github/workflows/cross-compiler.yml` (manual dispatch, `macos-latest`)
-Timeline: v1-v37 over the winter of 2025-2026 (first green 2026-03-07), host-GHC fixes April 2026, v38+ August 2026 against newer Xcode images.
+Timeline: v1-v37 over the winter of 2025-2026 (first green 2026-03-07), host-GHC fixes April 2026, v38-v42 August 2026 against newer Xcode images, port to 9.14.1 (Phase 9) August 2026.
+
+Phases 1-8 built and maintained the toolchain on GHC 9.8.4. Phase 9 ports it to
+9.14.1, the first LTS line. Everything before Phase 9 describes the 9.8.4 build
+and is kept verbatim as history: where a 9.8.4-era statement no longer holds for
+9.14, Phase 9 says so rather than editing the original entry.
 
 Nobody had documented a working GHC 9.8 iOS cross-compiler build from scratch.
 This log records every failure and fix: the original bootstrap iterations
@@ -21,14 +26,18 @@ history.
 
 ## Key Decisions
 
+Current as of the 9.14.1 port. Superseded 9.8.4-era decisions are marked; the
+reasoning that retired them is in Phase 9.
+
 | Decision | Why |
 |----------|-----|
-| Homebrew LLVM clang (not Xcode clang) | Apple's integrated assembler rejects arithmetic in CFI directives (`cfi_adjust_cfa_offset (8*2 + ...)`) that libffi's aarch64 assembly requires. Upstream LLVM handles these correctly. |
+| Apple clang via `xcrun` | The build compiler is now the same one the shipped `ios-cc` wrapper invokes at runtime. Supersedes the 9.8.4 choice of Homebrew LLVM, which existed only because Apple's assembler rejected libffi 3.4.6's aarch64 CFI. |
 | `+native_bignum` flavour | GMP is not available on iOS. Pure Haskell bignum backend, zero external deps. |
-| `--flags=-libm --flags=-libdl` | On iOS, `libm` and `libdl` are part of `libSystem` - no standalone libraries exist. GHC's `rts.cabal.in` uses flag conditionals for these. |
+| `--flags=-libm --flags=-libdl` | On iOS, `libm` and `libdl` are part of `libSystem` - no standalone libraries exist. GHC's `rts.cabal` uses flag conditionals for these. |
 | `-D_DARWIN_C_SOURCE` | iOS needs this for POSIX extensions like `pthread_setname_np`. |
-| `-Ddarwin_HOST_OS` | iOS is Darwin but GHC doesn't define this automatically for cross targets. RTS code paths depend on it for Mach APIs, signal handling, etc. |
-| Patch libffi tarball (not source) | Hadrian re-extracts from `libffi-tarballs/libffi-3.4.6.tar.gz` on every build attempt, overwriting any source patches. Must patch the tarball itself. |
+| `-Ddarwin_HOST_OS` | The RTS gates its Mach code paths on this macro. 9.14 generates `ghcplatform.h` from `rts/configure`'s own `--host` triple rather than the top-level configure's `TargetOS`, so whether it defines `ios_HOST_OS` or `darwin_HOST_OS` depends on which triple Cabal hands it. Forcing the define is correct under either answer and costs nothing. |
+| Target C flags in `CONF_CC_OPTS_STAGE2` | 9.14 describes the stage-1 (target) toolchain in `hadrian/cfg/default.target`, generated from the STAGE2 variables. `CONF_CC_OPTS_STAGE1` is accepted by the shell and then ignored. |
+| No libffi tarball repack (9.14+) | libffi 3.5.2 moved `.cfi_startproc` after the global label, which is what actually broke on Mach-O. Supersedes the 9.8.4 repack with `gcc_cv_as_cfi_pseudo_op=no`. |
 | `__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__` for iOS detection | Clang built-in when `-target arm64-apple-ios` is set. No `#include` needed. `TARGET_OS_IPHONE` requires `<TargetConditionals.h>` - doesn't work in sed patches. |
 
 ---
@@ -316,19 +325,262 @@ on an Xcode 26 image - five iterations after the runner image drift
 began (v38 TLS floor, v39 posix_spawn branch, v40 bindist toolchain,
 v41 disproved sysroot theory, v42 pre-seeded C++ std lib). Toolchain
 published as Release v42.
+---
+
+### Phase 9 - Port to GHC 9.14.1 (August 2026)
+
+GHC 9.14 is the first LTS line, with point releases expected through roughly
+summer 2028; 9.12 was skipped entirely. Issue #4 tracks the port. 9.14.1 is
+pinned because 9.14.2 was still at rc1 when this landed.
+
+Every flag and patch was re-checked against a pristine 9.14.1 tree before the
+workflow was touched. Findings below are from source unless marked otherwise;
+v44 is the first dispatch and has not run.
+
+#### iOS is now typed as Darwin
+
+GHC has always kept two representations of the target OS: a loose string from
+`m4/ghc_convert_os.m4`, which still maps `ios|watchos|tvos` to `"ios"`, and a
+typed `OS` ADT value from `checkOS` in `m4/fptools_set_haskell_platform_vars.m4`,
+which folds `darwin|ios|watchos|tvos` into `OSDarwin`. There is no iOS
+constructor in the ADT and there never was.
+
+In 9.8.4 hadrian read the STRING, which is the entire reason patch 001 existed:
+`isOsxTarget = anyTargetOs ["darwin"]` did not match `"ios"`, iOS registered as
+non-Apple, and the RTS link died on `ld: unknown options: -zorigin` (v32). In
+9.14 hadrian reads the TYPED value out of `hadrian/cfg/default.target`, so
+`isOsxTarget = anyTargetOs [OSDarwin]` is already True for `aarch64-apple-ios`
+with no patch. Patch 001 is not merely unnecessary, it is inexpressible: the
+function no longer takes strings.
+
+The collapse is NOT total, and the split matters:
+
+- Shell/CPP side still says iOS at the top level. `GHC_CONVERT_OS` yields
+  `TargetOS=ios`, and `--target=aarch64-apple-ios` still names the install
+  prefix and the binary. The RTS's own platform macros are a separate question:
+  9.14 moved `ghcplatform.h` generation into `rts/configure`, which derives
+  `HostOS` from the `--host` triple Cabal passes it (`rts/configure.ac:77-78`,
+  `rts/ghcplatform.h.top.in`). Cabal takes that triple from `ghc --info`, which
+  now reports `-darwin`, so `darwin_HOST_OS` is the likely define where 9.8.4
+  produced `ios_HOST_OS`. UNVERIFIED - it needs a run to settle. The workflow
+  keeps forcing `-Ddarwin_HOST_OS` because that is the correct answer under
+  either resolution. Patch 003 is unaffected either way: its guard fires on the
+  clang builtin, not on the platform macro.
+- Haskell side says Darwin. `targetPlatformTriple` RECONSTRUCTS the triple from
+  the typed value (`utils/ghc-toolchain/src/GHC/Toolchain/Target.hs:88`), so the
+  reported platform string becomes `aarch64-apple-darwin`.
+
+The reported triple reaches the installed artifact by a longer route than
+expected: hadrian generates `mk/project.mk` from `targetPlatformTriple`
+(`Rules/Generate.hs:399-411`), the bindist Makefile rebuilds `lib/settings` at
+install time from that (`hadrian/bindist/Makefile:120`), and GHC reports it as
+`Target platform`. The old verify assertion greps for `aarch64-apple-ios` and
+would fail on a perfectly correct build.
+
+What does NOT change: `TargetPlatformFull` is `target_alias`, the literal
+uncanonicalized `--target` string (`configure.ac:402-408`), and that is what
+`crossPrefix` uses. The binary is still `aarch64-apple-ios-ghc` and the install
+layout is still `lib/aarch64-apple-ios-ghc-<version>/lib`.
+
+Downstream consequence: Cabal derives its target platform from `ghc --info`.
+9.8.4 parsed `aarch64-apple-ios` to `IOS`; 9.14 parses `aarch64-apple-darwin` to
+`OSX`. In any consumer package `os(ios)` becomes false, `os(darwin)` and
+`os(osx)` become true, and Cabal's `$abi` install directory changes from
+`aarch64-ios-ghc-<ver>` to `aarch64-osx-ghc-<ver>`. Nothing errors.
+
+It also flips `rts.cabal`'s `if os(osx)` block ON for this target, which Phase 7
+explicitly records as being OFF on 9.8.4. In 9.14 that block is only
+`-Wl,-search_paths_first`, so the effect is benign - but the invariant Phase 7
+states no longer holds.
+
+#### Patches: 5 -> 2
+
+- **001 retired.** See above.
+- **002 and 004 retired.** The v34/v35 `.so` vs `.dylib` failure happened because
+  Cabal classified the target as `IOS` and `dllExtension` fell through to `"so"`.
+  With the target now classified `OSX`, `dllExtension` returns `"dylib"`, which
+  matches what hadrian builds. The machinery is all still present - Cabal still
+  has an `IOS` constructor, `dllExtension` still has no `IOS` case, hadrian still
+  installs through Cabal's Copy step - the failure is simply no longer reached.
+  Derived, not observed. If wrong, the failure is loud and specific
+  (`libHSrts-1.0.3-ghc9.14.1.so: copyFile: does not exist` during
+  `Copy package 'rts'`) and both patches come straight back.
+- **003 and 005 unchanged, byte-for-byte.** Regenerating them against pristine
+  9.14.1 produces files identical to the ones already in the repo; hunk headers
+  do not even move across three majors. Both apply at `--fuzz=0`. Both were
+  re-verified as still necessary by compiling minimal reproductions against the
+  iPhoneOS 26.5 SDK: unpatched, `mach/mach_vm.h:1: #error mach_vm.h unsupported`
+  and `posix_spawn_file_actions_addchdir_np is unavailable: not available on iOS`.
+
+Numbers are not renumbered: the log cross-references patches by number
+throughout, and closing the gaps would invalidate every one of those
+references.
+
+The patch-005 assertion was tightened from the `_NP` branch alone to requiring
+both branches. v39 established that current SDKs declare the standardized
+non-`_np` variant too, and that autoconf's link probe defines `HAVE_*` for both
+because it supplies its own prototype and bypasses the availability attribute -
+so the FIRST branch is the one that fires. The old assertion checked the branch
+that no longer matters.
+
+#### libffi: the workaround is retired, and the recorded root cause was wrong
+
+9.14 vendors libffi 3.5.2 (9.8.4 had 3.4.6). The tarball repack step is deleted:
+3.5.2's `src/aarch64/sysv.S` builds clean for `arm64-apple-ios` with CFI
+ENABLED under both Apple clang 21 and Homebrew LLVM 22, verified by configuring
+and building the library the way hadrian does.
+
+Phases 3 and 4 attribute the original breakage to arithmetic CFI expressions
+and to trailing semicolons from macro expansion. That diagnosis does not
+reproduce on today's toolchains: both constructs assemble fine in isolation on
+both compilers, and the arithmetic expressions are still present in 3.5.2. The
+construct that actually fails is `.cfi_startproc` emitted BEFORE the global
+function label on Mach-O; 3.5.2 moved it after `CNAME(...)` at three sites, and
+applying only that move to 3.4.6 makes it assemble with the semicolons and the
+arithmetic left untouched. 3.4.6 fails identically on BOTH compilers, which also
+undercuts the "Apple's assembler rejects it, upstream LLVM handles it" framing
+in v15 and in the README.
+
+Two consequences. Homebrew LLVM loses its only justification and is dropped:
+the wrappers now use Apple clang via `xcrun`, which makes the build compiler the
+same one the shipped `ios-cc` wrapper invokes. And libffi now emits real
+unwind data (`__eh_frame`, `__compact_unwind`) into the RTS on this target for
+the first time, which is a behaviour change rather than just a removed
+workaround.
+
+A related 9.14 change resolves itself for the same reason as 002/004:
+`Rules/Rts.hs` dropped its `not . wayUnit Dynamic` filter and now wants a libffi
+library file for every way, and libtool refuses to build any shared library for
+`--host=aarch64-apple-ios`. But hadrian now passes libffi the reconstructed
+`aarch64-apple-darwin` triple, so libtool does build the dylib and the
+requirement is satisfied.
+
+#### CONF_CC_OPTS_STAGE1 is dead, and fails silently
+
+`CONF_CC_OPTS_STAGE1` and `CONF_GCC_LINKER_OPTS_STAGE1` are no longer
+substituted by any config template and hadrian never reads them. In 9.14 the
+stage-1 (target) toolchain is described by `hadrian/cfg/default.target`, which
+configure generates from `CONF_CC_OPTS_STAGE2` / `CONF_GCC_LINKER_OPTS_STAGE2`.
+Passing the 9.8 values would be accepted by the shell and discarded, taking the
+iOS target, sysroot and both Darwin defines with them.
+
+The v38 mechanism itself is unchanged: configure still prepends its own derived,
+unversioned `--target=arm64-apple-ios`, so the versioned override still has to
+land after it. It just has to live in the STAGE2 variable now. The configure
+step asserts `arm64-apple-ios15.0` actually reached `default.target` rather than
+trusting that an unrecognized variable was honoured.
+
+`ghc-toolchain` exists in 9.14 but `--enable-ghc-toolchain` defaults to NO and
+it runs only as a non-fatal validation diff, so configure remains authoritative.
+
+#### Bootstrap and toolchain pins
+
+- **Boot GHC 9.8 -> 9.12.2.** configure accepts 9.6 or newer, but hadrian ships
+  bootstrap plans only for 9.10.x and 9.12.x, and under `hadrian/cabal.project`'s
+  pinned index-state (2025-01-27) a 9.10 boot compiler forces cabal to rebuild
+  directory, process, file-io and Cabal from Hackage. A `ghc --numeric-version`
+  assertion was added because configure resolves its boot compiler through
+  `WithGhc` while `hadrian/build-cabal` independently takes `GHC` off PATH; if
+  those disagree the build configures against one stage0 and compiles against
+  another.
+- **happy 2.2 -> 2.1.7.** configure requires `>= 2.0.2 && < 2.2`. A release
+  tarball ships pre-generated parsers so the check never runs, but an
+  out-of-bounds pin is not worth carrying. alex 3.5.4.2 is unchanged and in
+  bounds.
+- **Homebrew LLVM dropped.** See libffi above. Two latent defects went with it:
+  `--with-llc=` and `--with-opt=` were never configure options in 9.8.4 OR
+  9.14.1 - they are `LLC`/`OPT` precious variables, and autoconf was warning
+  "unrecognized options" and ignoring them all along. And `llvm@22` sat outside
+  the accepted LLVM range in both releases (`[11,16)` in 9.8.4, `[13,21)` in
+  9.14.1), so `llc`/`opt` were rejected regardless; the pin only ever supplied
+  clang.
+
+#### Install and packaging
+
+- The C++ std lib probe workaround from v42 STAYS. `fp_find_cxx_std_lib.m4` in
+  9.14.1 still tries only `c++ c++abi`, `c++ c++abi pthread` and `c++ cxxrt`,
+  with no plain-`c++` fallback, and current macOS SDKs still ship no linkable
+  libc++abi. The `CXX_STD_LIB_LIBS` escape hatch still short-circuits detection.
+- The v41 rule still applies: the bindist configure is a HOST configure and must
+  not be handed the cross toolchain. 9.14 adds a second reason - `MOVE_TO_FLAGS`
+  now word-splits `CC`/`CXX` into the flags variables.
+- **The portability step needed repair, not a version bump.** The wrapper
+  directory moved: 9.8 wrote into `$topdir/bin`, but hadrian no longer produces
+  a `lib/bin` at all and 9.14's settings refer to `$topdir/../bin` (the sibling
+  directory that already holds the real binaries). The old step would have died
+  on a missing directory. `ld command` and `ld flags` were removed from settings
+  entirely - GHC computes `ld_prog` from `cc_prog` regardless - so that sed and
+  the `ios-ld` wrapper were dead weight and are gone. Three new keys appear that
+  the bindist configure fills with the HOST compiler: `CPP command`,
+  `C-- CPP command` and `JavaScript CPP command`. The first two are now
+  rewritten; left alone they ship a cross-compiler that preprocesses with macOS
+  headers. `JavaScript CPP command` is left alone deliberately - it is only
+  consulted by the JS backend.
+- Each settings key is now asserted individually. The 9.8 verification used one
+  `grep -E` with alternatives, which exits 0 when any single alternative matches
+  and would therefore hide a key that vanished in a future GHC.
+- The verify gate no longer proves iOS-ness via the platform triple, since that
+  now says `darwin`. It asserts the exact new triple (so a future change is
+  loud), asserts `LLVM target` is `arm64-apple-ios`, and checks the smoke
+  object's Mach-O load commands directly: `platform 2` present, `platform 1`
+  absent. That is a stronger check than the string it replaces - it proves the
+  shipped wrapper produced iOS objects rather than that a settings field says so.
+
+#### host-fix-rts-darwin.sh retired, with a correction
+
+The script is deleted. 9.14.1's `rts/rts.cabal` darwin block is only
+`-Wl,-search_paths_first`; `fd_set_overflow` appears nowhere in the tree, and
+9.14 additionally removed `-Wl,-undefined,dynamic_lookup` from the RTS conf
+(#26166, replaced by the `RtsToHsIface` indirection). Against any 9.12+ host the
+script would report "already patched" and do nothing.
+
+Correction: the script header and Phase 7 both state the flag was fixed upstream
+in GHC 9.10. That is wrong. It ships in 9.10.1, 9.10.2 and 9.10.3, and was
+removed in 9.12.1. Phase 7 is left as written - it is dated history - so the
+correct version lives here. Anyone still running a host GHC older than 9.12 can
+take the script from the 9.8.4-era tags.
+
+One standing gap, pre-existing rather than new: GHC's two Apple-linker-warning
+suppressors (`-Wl,-no_warn_duplicate_libraries`, `-Wl,-no_fixup_chains`) are
+gated on `case $target in *-darwin)`, which `aarch64-apple-ios` does not match,
+so the cross-compiler's linker opts get neither. Phase 7 records that nova-kit's
+device link bypasses the cross GHC's link path entirely, which would hide it.
+Whether it produces real noise downstream is unverified.
+
+#### Open risks going into v44
+
+- 002/004 being droppable is a source derivation across m4, hadrian, the
+  settings file and Cabal. One wrong link flips it. Loud failure, patches ready.
+- The bindist configure now runs `bin/ghc-toolchain-bin`, which hadrian does not
+  appear to build for a cross bindist. Its exit status looks discarded by
+  design, but this is unproven and is the most likely new Install-step failure.
+- `FP_PROG_CC_LINKER_TARGET` and `CHECK_MERGE_OBJECTS` are new hard-failure
+  surfaces in the 9.14 configure, each with `AC_MSG_ERROR` paths that 9.8.4 had
+  no equivalent of.
+- The threaded RTS now uses `extern __thread` unconditionally on Darwin, having
+  dropped the `pthread_getspecific` fallback. Expected to be fine on iOS 15 with
+  native TLS, but it is a behaviour change on this target.
 
 ---
 
-## Patches (5 total, `cross-compiler/patches/`)
+## Patches (2 total, `cross-compiler/patches/`)
 
 | # | File | What |
 |---|------|------|
-| 001 | `hadrian/src/Oracles/Setting.hs` | `isOsxTarget` includes `"ios"` - Apple linker flags |
-| 002 | `libraries/Cabal/.../BuildPaths.hs` | `dllExtension`: `IOS -> "dylib"` |
 | 003 | `rts/ReportMemoryMap.c` | Guard `mach_vm.h` includes for iOS |
-| 004 | `hadrian/cabal.project` | Use in-tree Cabal so Hadrian gets patch 002 |
 | 005 | `libraries/process/.../posix_spawn.c` | Guard both `addchdir` branches for iOS |
 
+Retired by the 9.14 port (Phase 9), numbers not reused:
+
+| # | File | Why it is gone |
+|---|------|----------------|
+| 001 | `hadrian/src/Oracles/Setting.hs` | 9.14 hadrian reads the typed OS, which is already `OSDarwin` for iOS |
+| 002 | `libraries/Cabal/.../BuildPaths.hs` | Cabal now classifies the target as `OSX`, so `dllExtension` returns `dylib` |
+| 004 | `hadrian/cabal.project` | Only existed to make patch 002 reach hadrian |
+
 Plus:
-- libffi tarball repackage (script, not patch file) - `gcc_cv_as_cfi_pseudo_op=no`.
-- `cross-compiler/host-fix-rts-darwin.sh` - host-side post-install fix (see Phase 7).
+- No libffi tarball repack from 9.14 on - libffi 3.5.2 fixed the Mach-O CFI
+  construct that broke 3.4.6 (Phase 9).
+- `cross-compiler/host-fix-rts-darwin.sh` was deleted by the 9.14 port; the
+  underlying flag was removed upstream in GHC 9.12.1 (Phase 7, corrected in
+  Phase 9).

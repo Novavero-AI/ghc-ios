@@ -1,10 +1,10 @@
 <div align="center">
 <h1>ghc-ios</h1>
-<p><strong>A GHC 9.8 cross-compiler for aarch64-apple-ios.</strong></p>
-<p>Five patches, one libffi fix, and a CI bootstrap that turn the stock GHC source tarball into an App-Store-compatible Haskell toolchain on a standard macOS runner - with the complete failure-by-failure build log.</p>
+<p><strong>A GHC 9.14 cross-compiler for aarch64-apple-ios.</strong></p>
+<p>Two patches and a CI bootstrap that turn the stock GHC source tarball into an App-Store-compatible Haskell toolchain on a standard macOS runner - with the complete failure-by-failure build log.</p>
 
 [![CI](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml/badge.svg)](https://github.com/Novavero-AI/ghc-ios/actions/workflows/cross-compiler.yml)
-![GHC](https://img.shields.io/badge/GHC-9.8-purple)
+![GHC](https://img.shields.io/badge/GHC-9.14-purple)
 [![Release](https://img.shields.io/github/v/release/Novavero-AI/ghc-ios)](https://github.com/Novavero-AI/ghc-ios/releases/latest)
 ![License](https://img.shields.io/badge/license-BSD--3--Clause-blue)
 
@@ -12,63 +12,73 @@
 
 ---
 
-Nobody had documented a working GHC 9.8 iOS cross-compiler built from scratch. This repo is that documentation in executable form: dispatch the workflow and it takes GHC 9.8.4 from source tarball to a packaged `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 static libraries.
+Nobody had documented a working GHC iOS cross-compiler built from scratch. This repo is that documentation in executable form: dispatch the workflow and it takes GHC 9.14.1 from source tarball to a packaged `aarch64-apple-ios-ghc` that compiles Haskell to native ARM64 static libraries.
 
 It powers [nova-kit](https://novavero.ai), our pure-Haskell iOS framework. Full write-up: [Haskell on your iPhone](https://novavero.ai/blog/haskell-on-your-iphone). Every failure on the way, with commit hashes: [`cross-compiler/iteration-log.md`](cross-compiler/iteration-log.md).
 
-The work here predates this repo: it was done in nova-kit's private tree over the winter of 2025-2026, reaching the first green build (v37) in March 2026, and was extracted here for release. Log entries v38 onward document keeping that build green against newer Xcode runner images.
+The work here predates this repo: it was done in nova-kit's private tree over the winter of 2025-2026, reaching the first green build in March 2026 on GHC 9.8.4, and was extracted here for release. Phase 9 of the log ports it to 9.14.1, the first LTS line.
 
 ## Contents
 
 ```
 .github/workflows/cross-compiler.yml   bootstrap: source -> patched -> built -> packaged artifact
-cross-compiler/patches/                5 unified diffs, applied to ghc-9.8.4-src via patch -p1
+cross-compiler/patches/                2 unified diffs, applied to ghc-9.14.1-src via patch -p1
 cross-compiler/iteration-log.md        every failure and fix, v1 onward
-cross-compiler/host-fix-rts-darwin.sh  host-side fix for GHCup's darwin GHC 9.8
 ```
 
 ## The fixes
 
 | # | Problem | Fix | Where |
 |---|---------|-----|-------|
-| 1 | Hadrian doesn't treat iOS as an Apple platform (GNU ld flags, wrong rpaths) | `isOsxTarget` includes `"ios"` | `patches/001` |
-| 2 | Cabal names iOS shared libs `.so` | `dllExtension`: `IOS -> "dylib"` | `patches/002` |
-| 3 | `mach_vm.h` is `#error` on iOS (and the obvious `TARGET_OS_IPHONE` guard fails silently) | guard on `__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__` | `patches/003` |
-| 4 | Hadrian compiles against the boot GHC's Cabal, so fix 2 never takes effect | build Hadrian against in-tree Cabal | `patches/004` |
-| 5 | `posix_spawn`'s `addchdir` file actions are unavailable on iOS (newer SDKs declare the non-`_np` variant too) | guard both branches | `patches/005` |
-| 6 | Apple's assembler rejects libffi's CFI directives; source patches don't survive Hadrian's tarball re-extraction | Homebrew LLVM clang + repack the tarball with `gcc_cv_as_cfi_pseudo_op=no` | workflow step |
-| 7 | GHCup's host darwin GHC 9.8 ships a redundant `-Wl,-U` flag (warns on Xcode 15+) | idempotent `rts-*.conf` edit | `host-fix-rts-darwin.sh` |
+| 1 | `mach_vm.h` is `#error` on iOS (and the obvious `TARGET_OS_IPHONE` guard fails silently) | guard on `__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__` | `patches/003` |
+| 2 | `posix_spawn`'s `addchdir` file actions are unavailable on iOS, but autoconf's link probe defines `HAVE_*` for both variants anyway | guard both branches | `patches/005` |
+| 3 | iOS is Darwin, but GHC does not hand the RTS the Darwin defines it gates its Mach code on | `-Ddarwin_HOST_OS -D_DARWIN_C_SOURCE` plus a versioned `--target` in `CONF_CC_OPTS_STAGE2` | workflow step |
+| 4 | GHC's C++ std lib probe has no plain-`c++` candidate, and current macOS SDKs ship no linkable `libc++abi` | pre-seed `CXX_STD_LIB_LIBS=c++` for the bindist configure | workflow step |
+| 5 | The installed settings and wrappers carry build-machine paths, and 9.14's new CPP keys point at the host compiler | rewrite them to `$topdir`-relative `xcrun` wrappers | workflow step |
+
+Three fixes that GHC 9.8 needed are gone in 9.14, retired rather than ported - Hadrian now recognizes the target as Apple on its own, Cabal computes `dylib` for it, and libffi 3.5.2 fixed the Mach-O CFI construct that broke 3.4.6. The reasoning is in the log's Phase 9.
 
 ## The build, in order
 
 The workflow is the executable version of this recipe; to replicate it outside CI, follow the same order:
 
-1. Install a boot GHC 9.8, cabal, automake/autoconf/libtool, Homebrew `llvm@22` (pinned like every other input), and pinned `alex` + `happy`.
-2. Download `ghc-9.8.4-src` and verify its sha256 against the official `SHA256SUMS`.
-3. Write `ios-cc`/`ios-cxx` wrappers: Homebrew clang with `-target arm64-apple-ios15.0 -isysroot <iOS SDK>` baked in.
-4. Repack the vendored libffi tarball with `gcc_cv_as_cfi_pseudo_op=no` forced in its configure.
-5. Apply `cross-compiler/patches/001-005` with `patch -p1 --fuzz=0` and assert each landed.
-6. Configure with `--target=aarch64-apple-ios`, the wrappers, Homebrew `llc`/`opt`, and `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS --target=arm64-apple-ios15.0` in the stage-1 C flags: iOS is Darwin, but GHC doesn't say so for cross targets, and without the versioned target newer clang rejects the thread-local storage the threaded RTS needs.
-7. Build with Hadrian: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), and `-L` for the in-tree libffi.
-8. Install with the same flavour and flags - Hadrian persists nothing between invocations - plus `SDKROOT` and a pre-seeded `CXX_STD_LIB_LIBS=c++` for the binary-dist's host configure: current Apple SDKs ship no separate linkable libc++abi, and the C++ probe has no plain-`c++` fallback.
-9. Patch the install for portability (`xcrun`-based `ios-cc`/`ios-ld`, `$topdir`-relative settings), then verify: `--info` must report `aarch64-apple-ios`, and a smoke `-staticlib` compile through the shipped wrappers must produce an arm64 static library.
+1. Install a boot GHC 9.12.2, cabal, automake/autoconf/libtool, and pinned `alex` + `happy`. 9.14 accepts a boot GHC as old as 9.6, but only 9.10.x and 9.12.x have shipped bootstrap plans, and 9.12.2 is the one that needs no Hackage rebuilds under Hadrian's pinned index-state.
+2. Download `ghc-9.14.1-src` and verify its sha256 against the official `SHA256SUMS`.
+3. Write `ios-cc`/`ios-cxx` wrappers: Apple clang via `xcrun`, with `-target arm64-apple-ios15.0 -isysroot <iOS SDK>` baked in.
+4. Apply `cross-compiler/patches/003` and `005` with `patch -p1 --fuzz=0` and assert each landed.
+5. Configure with `--target=aarch64-apple-ios`, the wrappers, and `-D_DARWIN_C_SOURCE -Ddarwin_HOST_OS --target=arm64-apple-ios15.0` in `CONF_CC_OPTS_STAGE2`. It must be STAGE2: 9.14 describes the stage-1 target toolchain in `hadrian/cfg/default.target`, which is generated from the STAGE2 variables, and `CONF_CC_OPTS_STAGE1` is accepted and then ignored. The versioned target has to come after the unversioned one configure prepends, or newer clang assumes an iOS floor with no thread-local storage and refuses the threaded RTS.
+6. Build with Hadrian: `--flavour=quick+native_bignum` (no GMP on iOS), `--flags=-libm --flags=-libdl` (both live inside `libSystem`), and `-L` for the in-tree libffi.
+7. Install with the same flavour and flags - Hadrian persists nothing between invocations - plus `SDKROOT` and a pre-seeded `CXX_STD_LIB_LIBS=c++` for the binary-dist's host configure.
+8. Patch the install for portability (`xcrun`-based `ios-cc`, `$topdir`-relative settings), then verify: a smoke `-staticlib` compile through the shipped wrapper must produce an arm64 static library whose Mach-O load commands say iOS.
 
 ## Building it
 
-Prebuilt: the [latest Release](https://github.com/Novavero-AI/ghc-ios/releases/latest) is the packaged toolchain, with the run that built it named in the notes - download the tarball and unpack it to `~/ghc-ios`, or anywhere `$GHC_IOS` points.
+Prebuilt: the [latest Release](https://github.com/Novavero-AI/ghc-ios/releases/latest) is the packaged toolchain, with the run that built it named in the notes - download the tarball and unpack it to `~/ghc-ios`, or anywhere `$GHC_IOS` points. Releases are per-version; the GHC 9.8.4 releases remain available and frozen.
 
-From scratch: fork or clone, then manually dispatch **Build GHC Cross Compiler (iOS)** under Actions. The workflow downloads `ghc-9.8.4-src`, patches it, builds with Hadrian on `macos-latest` (roughly an hour end to end), verifies, and uploads the toolchain as an artifact (artifacts expire after 30 days; pass the optional `release_tag` dispatch input to also publish the result as a durable GitHub Release). Unpack to `~/ghc-ios` or set `$GHC_IOS`. (The repo checkout and the installed toolchain are different things that share a default name - if you cloned this repo to `~/ghc-ios` itself, unpack the toolchain elsewhere and point `$GHC_IOS` at it.)
+From scratch: fork or clone, then manually dispatch **Build GHC Cross Compiler (iOS)** under Actions. The workflow downloads `ghc-9.14.1-src`, patches it, builds with Hadrian on `macos-latest` (roughly an hour end to end), verifies, and uploads the toolchain as an artifact (artifacts expire after 30 days; pass the optional `release_tag` dispatch input to also publish the result as a durable GitHub Release). Unpack to `~/ghc-ios` or set `$GHC_IOS`. (The repo checkout and the installed toolchain are different things that share a default name - if you cloned this repo to `~/ghc-ios` itself, unpack the toolchain elsewhere and point `$GHC_IOS` at it.)
 
-To use the toolchain you also need Xcode with the iOS SDK, Homebrew LLVM (`brew install llvm`), and, if your host GHC comes from GHCup, one run of `./cross-compiler/host-fix-rts-darwin.sh` after each `ghcup install ghc`.
+To use the toolchain you need Xcode with the iOS SDK. Nothing else: as of the 9.14 port the build no longer depends on Homebrew LLVM, because the libffi problem that justified it was fixed upstream.
 
 ## Using it
 
 ```sh
-~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep "Target platform"   # aarch64-apple-ios
+~/ghc-ios/bin/aarch64-apple-ios-ghc --version                          # 9.14.1
 ~/ghc-ios/bin/aarch64-apple-ios-ghc -staticlib -no-hs-main -o libapp.a App.hs
 ```
 
 The output is an ARM64 static library: the app embeds it, calls `hs_init`, and reaches Haskell through `foreign export`. `-staticlib -no-hs-main` is the invocation shape nova-kit's build pipeline uses on every build. The final app link also needs the three RTS symbol overrides described under Scope.
+
+### One thing to know before you port a downstream build
+
+GHC 9.14 reports this toolchain's target platform as **`aarch64-apple-darwin`**, not `aarch64-apple-ios`. That is correct, not a misconfiguration: GHC's configure has always folded `darwin|ios|watchos|tvos` into a single `OSDarwin` value, and 9.14 reconstructs the reported triple from that typed value instead of echoing the configure triple the way 9.8 did. The compiler still targets iOS - `LLVM target` is `arm64-apple-ios`, and the objects it emits carry the iOS platform load command.
+
+The consequence is downstream and silent. Cabal derives its target platform from `ghc --info`, so:
+
+- `os(ios)` conditionals in `.cabal` files become **false**
+- `os(darwin)` and `os(osx)` conditionals become **true**
+- Cabal's `$abi` install directory changes from `aarch64-ios-ghc-<ver>` to `aarch64-osx-ghc-<ver>`
+
+Nothing errors; you just get a differently-configured build. Grep your packages for `os(ios)` before moving them to this toolchain. The binary name and install layout are unchanged.
 
 ## Scope
 
@@ -80,11 +90,11 @@ The original `ghc-ios` scripts (GHC 7.x era) proved this was possible before goi
 
 ## Upstreaming
 
-Several of these patches are one-line guards that belong in GHC proper. If you work on GHC or Hadrian and have opinions about iOS as a target, open an issue.
+Several of these fixes are one-line guards that belong in GHC proper, and the C++ std lib probe's missing plain-`c++` candidate is a real bug against current Apple SDKs. If you work on GHC or Hadrian and have opinions about iOS as a target, open an issue.
 
 ## License
 
-BSD-3-Clause. The patches are diffs against GHC, Cabal, and process sources, which are BSD-licensed by their respective authors.
+BSD-3-Clause. The patches are diffs against GHC and process sources, which are BSD-licensed by their respective authors.
 
 ---
 

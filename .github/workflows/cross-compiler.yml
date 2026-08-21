@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Also publish the toolchain as this Release tag (e.g. v43). Empty = artifact only.'
+        description: 'Also publish the toolchain as this Release tag (e.g. v44). Empty = artifact only.'
         required: false
         default: ''
         type: string
@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build-ghc-ios:
-    name: GHC 9.8.4 -> aarch64-apple-ios
+    name: GHC 9.14.1 -> aarch64-apple-ios
     runs-on: macos-latest
     timeout-minutes: 180
 
@@ -41,37 +41,52 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/ghc-ios
-          key: ghc-9.8.4-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
+          key: ghc-9.14.1-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
 
       - name: Install boot GHC
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         uses: haskell-actions/setup@6037f33647c3f17758a2356c80fc4a53d7e0685d # v2
         with:
-          ghc-version: '9.8'
+          # 9.14.1's configure accepts a boot GHC as old as 9.6, but the
+          # only versions hadrian ships bootstrap plans for are 9.10.x and
+          # 9.12.x, and under hadrian/cabal.project's pinned index-state
+          # (2025-01-27) a 9.10 boot compiler forces cabal to rebuild
+          # directory, process, file-io and Cabal from Hackage. 9.12.2
+          # needs none of them.
+          ghc-version: '9.12.2'
           cabal-version: 'latest'
 
       - name: Install build deps
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          # llvm@22, not bare llvm: the LLVM major is a pinned build input
-          # like the source checksum and alex/happy; the bare formula
-          # floats with Homebrew.
-          brew install automake autoconf libtool llvm@22
+          brew install automake autoconf libtool
           # Exact versions: a floating 'cabal install alex happy' takes
           # whatever is newest, and can land in the window where a mirror
-          # has not yet synced a fresh release.
-          cd /tmp && cabal install alex-3.5.4.2 happy-2.2 --install-method=copy --overwrite-policy=always
-          echo "/opt/homebrew/opt/llvm@22/bin" >> $GITHUB_PATH
+          # has not yet synced a fresh release. happy is pinned to 2.1.7,
+          # not 2.2: configure.ac's check is `>= 2.0.2 && < 2.2`, and
+          # while a release tarball ships pre-generated parsers (so the
+          # check never runs), an in-bounds version is the honest pin.
+          cd /tmp && cabal install alex-3.5.4.2 happy-2.1.7 --install-method=copy --overwrite-policy=always
           echo "$HOME/.cabal/bin" >> $GITHUB_PATH
+
+      - name: Assert boot toolchain
+        if: steps.cache-ghc.outputs.cache-hit != 'true'
+        run: |
+          # configure resolves its boot compiler through WithGhc, but
+          # hadrian/build-cabal independently takes GHC="${GHC:-ghc}" off
+          # PATH. If those two ever disagree the build configures against
+          # one stage0 and compiles against another, so pin the
+          # expectation here rather than discovering it mid-build.
+          test "$(ghc --numeric-version)" = "9.12.2" \
+            || { echo "boot GHC is $(ghc --numeric-version), expected 9.12.2"; exit 1; }
 
       - name: Download and extract GHC source
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          curl -L https://downloads.haskell.org/ghc/9.8.4/ghc-9.8.4-src.tar.xz -o /tmp/ghc-src.tar.xz
+          curl -L https://downloads.haskell.org/ghc/9.14.1/ghc-9.14.1-src.tar.xz -o /tmp/ghc-src.tar.xz
           # Pin the source input like everything else (alex/happy versions,
-          # llvm major, action SHAs): the value from the official 9.8.4
-          # SHA256SUMS.
-          echo "17e8188f3c8a5c2f73fb4e35d01032e8dc258835ec876d52c8ad8ee3d24b2fc5  /tmp/ghc-src.tar.xz" | shasum -a 256 -c -
+          # action SHAs): the value from the official 9.14.1 SHA256SUMS.
+          echo "2a83779c9af86554a3289f2787a38d6aa83d00d136aa9f920361dd693c101e77  /tmp/ghc-src.tar.xz" | shasum -a 256 -c -
           tar xf /tmp/ghc-src.tar.xz -C /tmp
           rm /tmp/ghc-src.tar.xz
 
@@ -81,71 +96,35 @@ jobs:
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           echo "iOS SDK: $IOS_SDK"
 
-          # Use Homebrew LLVM clang - NOT Apple's Xcode clang.
-          # Apple's integrated assembler rejects arithmetic in CFI directives
-          # (e.g. .cfi_adjust_cfa_offset (8*2 + ...)) which libffi's aarch64
-          # assembly requires. Upstream LLVM handles these correctly.
-          LLVM_CC=/opt/homebrew/opt/llvm@22/bin/clang
-          LLVM_CXX=/opt/homebrew/opt/llvm@22/bin/clang++
+          # Apple's clang, via xcrun. Through GHC 9.8 this build used
+          # Homebrew LLVM because Apple's integrated assembler rejected
+          # libffi 3.4.6's aarch64 CFI; libffi 3.5.2 (vendored by 9.14)
+          # fixed the construct that actually tripped it, and both
+          # assemblers now build it clean. Using Apple clang here also
+          # makes the build compiler the same one the SHIPPED ios-cc
+          # wrapper invokes at runtime, which was never true before.
+          IOS_CC=$(xcrun --sdk iphoneos -f clang)
+          IOS_CXX=$(xcrun --sdk iphoneos -f clang++)
 
-          printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$LLVM_CC" "$IOS_SDK" > /tmp/ios-cc
-          printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$LLVM_CXX" "$IOS_SDK" > /tmp/ios-cxx
+          printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$IOS_CC" "$IOS_SDK" > /tmp/ios-cc
+          printf '#!/bin/bash\nexec %s -target arm64-apple-ios15.0 -isysroot %s "$@"\n' "$IOS_CXX" "$IOS_SDK" > /tmp/ios-cxx
           chmod +x /tmp/ios-cc /tmp/ios-cxx
 
           # Verify wrappers work
           /tmp/ios-cc --version
           /tmp/ios-cxx --version
 
-      - name: Patch bundled libffi tarball for iOS
-        if: steps.cache-ghc.outputs.cache-hit != 'true'
-        run: |
-          cd /tmp/ghc-9.8.4
-
-          # Apple's assembler rejects the arithmetic CFI expressions in
-          # libffi's aarch64/sysv.S outright; Homebrew LLVM parses them,
-          # but libffi's CFI path is still broken there (trailing
-          # semicolons from C macro expansion, e.g. .cfi_def_cfa x1, 40;),
-          # so CFI is disabled entirely.
-          #
-          # Hadrian extracts libffi from libffi-tarballs/libffi-3.4.6.tar.gz
-          # and re-extracts on every build attempt, so the TARBALL itself
-          # must be patched. Forcing the configure cache variable
-          # gcc_cv_as_cfi_pseudo_op=no makes the emitted HAVE_AS_CFI_PSEUDO_OP
-          # define turn every CFI macro into a no-op. Only loses debug
-          # stack traces through FFI.
-          TARBALL=libffi-tarballs/libffi-3.4.6.tar.gz
-          echo "=== Patching libffi tarball ==="
-          ls -la "$TARBALL"
-
-          mkdir -p /tmp/libffi-patch
-          tar xf "$TARBALL" -C /tmp/libffi-patch
-          # GCC-style cache variable name, even though the test runs
-          # against clang.
-          find /tmp/libffi-patch -name 'configure' -exec \
-            sed -i '' 's/gcc_cv_as_cfi_pseudo_op=yes/gcc_cv_as_cfi_pseudo_op=no/g' {} \;
-
-          echo "=== Verify patch ==="
-          # Hard assertion - find -exec would swallow grep's status.
-          grep -c 'gcc_cv_as_cfi_pseudo_op=no' $(find /tmp/libffi-patch -name 'configure') \
-            || { echo "libffi CFI patch FAILED - cache variable not forced"; exit 1; }
-
-          # Re-package the patched tarball
-          cd /tmp/libffi-patch
-          tar czf /tmp/ghc-9.8.4/"$TARBALL" libffi-3.4.6
-          rm -rf /tmp/libffi-patch
-
       - name: Apply iOS patches
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          cd /tmp/ghc-9.8.4
+          cd /tmp/ghc-9.14.1
 
           # Apply unified diff patches from cross-compiler/patches/.
-          # These fix GHC's lack of iOS cross-compilation support:
-          #   001 - Hadrian: recognize iOS as Apple platform (linker flags)
-          #   002 - Cabal: iOS uses .dylib, not .so (copy step)
           #   003 - RTS: guard mach_vm.h includes for iOS
-          #   004 - Hadrian: build against in-tree Cabal so 002 takes effect
-          #   005 - process: guard posix_spawn addchdir variants for iOS
+          #   005 - process: guard both posix_spawn addchdir variants for iOS
+          # Numbers are historical and deliberately not renumbered: the
+          # iteration log cross-references them by number throughout.
+          # 001/002/004 were retired by the 9.14 port - see Phase 9.
           # --fuzz=0 because plain 'patch -p1' defaults to fuzz 2 and can
           # silently accept a fuzzy-but-wrong match; the patches are exact
           # diffs against the pinned pristine tarball, so ANY context
@@ -157,28 +136,46 @@ jobs:
 
           # Belt and braces on top of --fuzz=0: these greps assert the
           # patched code is really in place. Catching a problem here is
-          # far cheaper than a cryptic link failure 45 minutes into the
-          # Hadrian build.
-          grep -q '"ios"' hadrian/src/Oracles/Setting.hs || { echo "PATCH 001 FAILED"; exit 1; }
-          grep -q 'IOS' libraries/Cabal/Cabal/src/Distribution/Simple/BuildPaths.hs || { echo "PATCH 002 FAILED"; exit 1; }
+          # far cheaper than a cryptic compile failure 45 minutes into
+          # the Hadrian build.
           MATCHES=$(grep -c '__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__' rts/ReportMemoryMap.c)
           if [ "$MATCHES" -ne 2 ]; then echo "PATCH 003 FAILED - expected 2 matches, got $MATCHES"; exit 1; fi
-          grep -q 'libraries/Cabal/Cabal' hadrian/cabal.project || { echo "PATCH 004 FAILED"; exit 1; }
-          grep -q 'ADDCHDIR_NP.*__ENVIRONMENT_IPHONE' libraries/process/cbits/posix/posix_spawn.c || { echo "PATCH 005 FAILED"; exit 1; }
+          # Both addchdir branches must be guarded, not just the _np one:
+          # current iPhoneOS SDKs declare the standardized non-_np variant
+          # too, and autoconf's link probe defines HAVE_* for both, so the
+          # FIRST branch is the one that fires (log v39).
+          MATCHES=$(grep -c 'ADDCHDIR.*__ENVIRONMENT_IPHONE' libraries/process/cbits/posix/posix_spawn.c)
+          if [ "$MATCHES" -ne 2 ]; then echo "PATCH 005 FAILED - expected 2 matches, got $MATCHES"; exit 1; fi
 
       - name: Configure for iOS
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          cd /tmp/ghc-9.8.4
+          cd /tmp/ghc-9.14.1
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
-          # Let GHC build its own libffi for both stages.
-          # Stage 0 (native macOS) has no issues. Stage 1 (iOS) uses
-          # the patched configure that disables CFI pseudo-ops.
+          # CONF_*_STAGE2, not STAGE1. In 9.14 the stage-1 (target)
+          # toolchain is described by hadrian/cfg/default.target, which
+          # configure generates from the STAGE2 variables; nothing
+          # substitutes CONF_CC_OPTS_STAGE1 any more and hadrian never
+          # reads it. Passing the iOS flags as STAGE1 would be accepted
+          # silently and then dropped on the floor.
+          #
+          # --target=arm64-apple-ios15.0 must be INSIDE this value:
+          # configure prepends its own derived, unversioned
+          # --target=arm64-apple-ios, and clang takes the last target
+          # flag, so the versioned one has to land after it. Without a
+          # deployment version newer clang assumes an iOS floor with no
+          # thread-local storage and refuses the threaded RTS (log v38).
+          #
+          # -Ddarwin_HOST_OS: the RTS gates its Mach code paths on this
+          # macro. 9.14 generates ghcplatform.h from rts/configure's own
+          # --host triple, so whether it defines ios_HOST_OS or
+          # darwin_HOST_OS depends on the triple Cabal hands it; forcing
+          # the define is correct either way and costs nothing.
+          # -D_DARWIN_C_SOURCE exposes POSIX extensions such as
+          # pthread_setname_np.
           ./configure \
             --target=aarch64-apple-ios \
-            --with-llc=/opt/homebrew/opt/llvm@22/bin/llc \
-            --with-opt=/opt/homebrew/opt/llvm@22/bin/opt \
             --prefix=$HOME/ghc-ios \
             CC=/tmp/ios-cc \
             CXX=/tmp/ios-cxx \
@@ -186,13 +183,21 @@ jobs:
             AR=$(xcrun --sdk iphoneos -f ar) \
             RANLIB=$(xcrun --sdk iphoneos -f ranlib) \
             STRIP=$(xcrun --sdk iphoneos -f strip) \
-            CONF_CC_OPTS_STAGE1="--target=arm64-apple-ios15.0 -isysroot $IOS_SDK -D_DARWIN_C_SOURCE -Ddarwin_HOST_OS" \
-            CONF_GCC_LINKER_OPTS_STAGE1="-isysroot $IOS_SDK -L$IOS_SDK/usr/lib"
+            CONF_CC_OPTS_STAGE2="--target=arm64-apple-ios15.0 -isysroot $IOS_SDK -D_DARWIN_C_SOURCE -Ddarwin_HOST_OS" \
+            CONF_GCC_LINKER_OPTS_STAGE2="-isysroot $IOS_SDK -L$IOS_SDK/usr/lib"
+
+          # configure is authoritative for the target description
+          # (--enable-ghc-toolchain defaults to NO in 9.14; ghc-toolchain
+          # only runs as a non-fatal validation diff). Assert the flags
+          # actually landed in default.target rather than trusting that
+          # an unrecognized variable was honoured.
+          grep -q 'arm64-apple-ios15.0' hadrian/cfg/default.target \
+            || { echo "CONF_CC_OPTS_STAGE2 did not reach default.target"; exit 1; }
 
       - name: Build with Hadrian
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          cd /tmp/ghc-9.8.4
+          cd /tmp/ghc-9.14.1
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
           # iOS cross-compilation flags:
@@ -207,7 +212,7 @@ jobs:
       - name: Install
         if: steps.cache-ghc.outputs.cache-hit != 'true'
         run: |
-          cd /tmp/ghc-9.8.4
+          cd /tmp/ghc-9.14.1
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 
           # Must pass the same flags as the build step - Hadrian doesn't
@@ -218,17 +223,18 @@ jobs:
           # probes natively. Do NOT hand it the iOS cross wrappers: with
           # no explicit --host, autoconf compiles a test program and RUNS
           # it, and an arm64-ios binary cannot execute on the macOS host
-          # ("cannot run C compiled programs").
+          # ("cannot run C compiled programs"). 9.14 adds a second reason:
+          # MOVE_TO_FLAGS word-splits CC/CXX into the flags variables.
           export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
 
           # The C++ std lib probe (fp_find_cxx_std_lib.m4) only tries
-          # c++abi/cxxrt combinations and has no plain-c++ fallback; the
-          # Xcode 26 macOS SDK no longer ships a linkable libc++abi, so
-          # the probe cannot succeed on this image even with SDKROOT (the
-          # iOS SDK still carries libc++abi, which is why the source-tree
-          # configure passes). Pre-seed the documented escape-hatch
-          # variables: modern Darwin bundles the ABI inside libc++, so
-          # plain c++ is the truthful answer.
+          # c++abi/cxxrt combinations and still has no plain-c++ fallback
+          # in 9.14; current macOS SDKs no longer ship a linkable
+          # libc++abi, so the probe cannot succeed on this image even with
+          # SDKROOT (the iOS SDK still carries libc++abi, which is why the
+          # source-tree configure passes). Pre-seed the documented
+          # escape-hatch variables: modern Darwin bundles the ABI inside
+          # libc++, so plain c++ is the truthful answer.
           export CXX_STD_LIB_LIBS="c++"
           export CXX_STD_LIB_LIB_DIRS=""
           export CXX_STD_LIB_DYN_LIB_DIRS=""
@@ -240,7 +246,7 @@ jobs:
             "stage1.rts.ghc.link.opts += -optl-L_build/stage1/libffi/build/inst/lib" \
             || {
               echo "=== install failed; bindist config.log probe section ==="
-              find _build/bindist -name config.log -exec grep -n -B 4 -A 40 "linkage against\|std_lib" {} \;
+              find _build/bindist -name config.log -exec grep -n -B 4 -A 40 "linkage against\|std_lib\|linker target\|merge objects" {} \;
               echo "=== bindist config.log tail ==="
               find _build/bindist -name config.log -exec tail -60 {} \;
               exit 1
@@ -255,62 +261,69 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/ghc-ios
-          key: ghc-9.8.4-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
+          key: ghc-9.14.1-aarch64-apple-ios-${{ hashFiles('cross-compiler/patches/*.patch', '.github/workflows/cross-compiler.yml') }}
 
       - name: Patch artifact for portability
         run: |
-          # The installed cross-compiler has hardcoded CI runner paths in its
-          # wrapper scripts and settings file.  We replace them with portable
-          # alternatives so the artifact works on ANY macOS machine:
+          # The installed cross-compiler has hardcoded CI runner paths in
+          # its settings file. We replace them with portable alternatives
+          # so the artifact works on ANY macOS machine:
           #
-          #   ios-cc  - xcrun discovers the iOS SDK at runtime
-          #   ios-ld  - xcrun discovers the linker at runtime
+          #   ios-cc   - xcrun discovers the iOS SDK at runtime
           #   settings - uses $topdir so paths are relative to the install
           #
           # Without this step, anyone who downloads the artifact gets:
           #   "No such file or directory: /Users/runner/..."
-
-          GHC_LIB=~/ghc-ios/lib/aarch64-apple-ios-ghc-9.8.4/lib
-          BIN_DIR="$GHC_LIB/bin"
+          #
+          # Layout note: ghclibdir is <prefix>/lib/<target>-ghc-<version>,
+          # GHC's $topdir is ghclibdir/lib (where settings lives), and the
+          # wrappers sit in the SIBLING ghclibdir/bin - which settings
+          # refers to as "$topdir/../bin". In 9.8 that directory was
+          # $topdir/bin; hadrian no longer creates a lib/bin at all.
+          GHC_ROOT=~/ghc-ios/lib/aarch64-apple-ios-ghc-9.14.1
+          GHC_LIB="$GHC_ROOT/lib"
+          BIN_DIR="$GHC_ROOT/bin"
+          test -d "$BIN_DIR" || { echo "expected wrapper dir $BIN_DIR to exist"; exit 1; }
 
           # 1. Create portable ios-cc wrapper (uses xcrun for dynamic SDK)
           printf '#!/bin/sh\nexec xcrun --sdk iphoneos clang -target arm64-apple-ios15.0 "$@"\n' > "$BIN_DIR/ios-cc"
           chmod +x "$BIN_DIR/ios-cc"
 
-          # 2. Create portable ios-ld wrapper
-          printf '#!/bin/sh\nexec xcrun --sdk iphoneos ld "$@"\n' > "$BIN_DIR/ios-ld"
-          chmod +x "$BIN_DIR/ios-ld"
-
-          # 3. Patch settings to use $topdir-relative wrappers. The last
-          #    rule keeps the user contract of 'brew install llvm' (README):
-          #    the BUILD pins llvm@22, but the llc/opt paths baked into
-          #    settings (only consulted for -fllvm) must resolve against
-          #    the unversioned formula on a user machine.
+          # 2. Patch settings to use $topdir-relative wrappers.
+          #    "ld command" is NOT in this list: 9.14 removed the key, and
+          #    GHC computes ld_prog from cc_prog regardless, so patching
+          #    the C compiler command already redirects the linker and the
+          #    assembler. The three CPP keys are new in 9.14 and the
+          #    bindist configure fills them with the HOST compiler; left
+          #    alone they ship a cross-compiler that preprocesses with
+          #    macOS headers.
           SETTINGS="$GHC_LIB/settings"
           sed -i '' \
-            -e 's|"C compiler command", "[^"]*"|"C compiler command", "$topdir/bin/ios-cc"|' \
-            -e 's|"Haskell CPP command", "[^"]*"|"Haskell CPP command", "$topdir/bin/ios-cc"|' \
-            -e 's|"ld command", "[^"]*"|"ld command", "$topdir/bin/ios-ld"|' \
+            -e 's|"C compiler command", "[^"]*"|"C compiler command", "$topdir/../bin/ios-cc"|' \
+            -e 's|"Haskell CPP command", "[^"]*"|"Haskell CPP command", "$topdir/../bin/ios-cc"|' \
+            -e 's|"CPP command", "[^"]*"|"CPP command", "$topdir/../bin/ios-cc"|' \
+            -e 's|"C-- CPP command", "[^"]*"|"C-- CPP command", "$topdir/../bin/ios-cc"|' \
             -e 's|"cross compiling", "NO"|"cross compiling", "YES"|' \
-            -e 's|/opt/homebrew/opt/llvm@22/bin/|/opt/homebrew/opt/llvm/bin/|g' \
             "$SETTINGS"
 
-          # 4. Verify
+          # 3. Verify. Each key is asserted individually: a single grep -E
+          #    with alternatives exits 0 when ANY one matches, which would
+          #    hide a key that disappeared in a future GHC.
+          for key in "C compiler command" "Haskell CPP command" "CPP command" "C-- CPP command"; do
+            grep -qF "\"$key\", \"\$topdir/../bin/ios-cc\"" "$SETTINGS" \
+              || { echo "settings key not rewritten: $key"; grep "\"$key\"" "$SETTINGS"; exit 1; }
+          done
+          grep -qF '"cross compiling", "YES"' "$SETTINGS" \
+            || { echo "cross compiling flag not set"; exit 1; }
           echo "=== ios-cc ==="
           cat "$BIN_DIR/ios-cc"
-          echo "=== ios-ld ==="
-          cat "$BIN_DIR/ios-ld"
-          echo "=== settings (patched lines) ==="
-          grep -E '(C compiler command|Haskell CPP command|ld command|cross compiling)' "$SETTINGS"
 
-          # 5. No build-machine path may survive into settings: neither
-          #    the /tmp wrappers nor the versioned llvm@22 keg, which
-          #    users are not asked to install. Nothing writes them today;
-          #    a future GHC recording extra toolchain fields must not
-          #    ship a broken settings unnoticed.
-          if grep -q '/tmp/ios\|llvm@' "$SETTINGS"; then
-            echo "settings still references build-machine paths:"
-            grep '/tmp/ios\|llvm@' "$SETTINGS"
+          # 4. No build-machine path may survive into settings. Nothing
+          #    writes /tmp/ios today; a future GHC recording extra
+          #    toolchain fields must not ship a broken settings unnoticed.
+          if grep -qF '/tmp/ios' "$SETTINGS"; then
+            echo "settings still references build-machine wrappers:"
+            grep '/tmp/ios' "$SETTINGS"
             exit 1
           fi
 
@@ -319,31 +332,53 @@ jobs:
           # Hard gate. On a cache-hit run this is the only check that the
           # cached toolchain is sane before it is repackaged and uploaded.
           ls -la ~/ghc-ios/bin/
-          ~/ghc-ios/bin/aarch64-apple-ios-ghc --version
-          ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep '("Target platform","aarch64-apple-ios")'
+          ~/ghc-ios/bin/aarch64-apple-ios-ghc --version | grep '9\.14\.1'
+
+          # "Target platform" reports aarch64-apple-DARWIN on 9.14, not
+          # -ios. That is correct and not a misconfiguration: configure
+          # folds darwin|ios|watchos|tvos into OSDarwin, and 9.14
+          # reconstructs the reported triple from that typed value
+          # (targetPlatformTriple) instead of echoing the configure
+          # triple as 9.8 did. The iOS-ness of the toolchain lives in
+          # "LLVM target", which is asserted below, and in the C compiler
+          # flags. Asserting the exact string keeps a future change here
+          # loud rather than silent.
+          ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep '("Target platform","aarch64-apple-darwin")'
+          ~/ghc-ios/bin/aarch64-apple-ios-ghc --info | grep '("LLVM target","arm64-apple-ios")'
 
           # Smoke test: compile a static library with the exact toolchain
-          # a user downloads - the xcrun-based ios-cc/ios-ld wrappers the
-          # portability step just wrote, not the /tmp build wrappers.
-          # This is the only compile the shipped wrappers get before
+          # a user downloads - the xcrun-based ios-cc wrapper the
+          # portability step just wrote, not the /tmp build wrapper.
+          # This is the only compile the shipped wrapper gets before
           # upload. Same invocation shape as the README's Using-it
-          # section.
+          # section, and the real proof the output targets iOS.
           SMOKE=$(mktemp -d)
           printf '{-# LANGUAGE ForeignFunctionInterface #-}\nmodule Smoke where\n\nforeign export ccall nk_smoke :: Int -> Int\n\nnk_smoke :: Int -> Int\nnk_smoke = succ\n' > "$SMOKE/Smoke.hs"
           ~/ghc-ios/bin/aarch64-apple-ios-ghc -staticlib -no-hs-main -o "$SMOKE/libsmoke.a" "$SMOKE/Smoke.hs"
           lipo -info "$SMOKE/libsmoke.a"
           lipo -info "$SMOKE/libsmoke.a" | grep arm64
           nm "$SMOKE/libsmoke.a" 2>/dev/null | grep -q '_nk_smoke'
-          echo "smoke test OK: arm64 static library with exported symbol"
+          # The object must be built for iOS, not macOS - this is the
+          # assertion the platform triple used to provide before 9.14
+          # started reporting aarch64-apple-darwin. Current toolchains
+          # emit LC_BUILD_VERSION with "platform 2" (iOS); "platform 1"
+          # is macOS and is the exact failure this guards against.
+          otool -l "$SMOKE/libsmoke.a" > "$SMOKE/loadcmds.txt"
+          grep -q 'platform 2' "$SMOKE/loadcmds.txt" \
+            || { echo "smoke object is not an iOS build"; head -40 "$SMOKE/loadcmds.txt"; exit 1; }
+          if grep -q 'platform 1' "$SMOKE/loadcmds.txt"; then
+            echo "smoke object contains a macOS-platform member"; exit 1
+          fi
+          echo "smoke test OK: arm64 iOS static library with exported symbol"
 
       - name: Package
-        run: tar czf ghc-9.8.4-aarch64-apple-ios.tar.gz -C ~ ghc-ios
+        run: tar czf ghc-9.14.1-aarch64-apple-ios.tar.gz -C ~ ghc-ios
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ghc-9.8.4-aarch64-apple-ios
-          path: ghc-9.8.4-aarch64-apple-ios.tar.gz
+          name: ghc-9.14.1-aarch64-apple-ios
+          path: ghc-9.14.1-aarch64-apple-ios.tar.gz
           # Repo retention cap is 30; the durable copy of a green build is
           # its GitHub Release, not the CI artifact.
           retention-days: 30
@@ -365,21 +400,21 @@ jobs:
       - name: Download toolchain artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: ghc-9.8.4-aarch64-apple-ios
+          name: ghc-9.14.1-aarch64-apple-ios
 
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.release_tag }}
         run: |
-          TARBALL=ghc-9.8.4-aarch64-apple-ios.tar.gz
+          TARBALL=ghc-9.14.1-aarch64-apple-ios.tar.gz
           # Must contain the compiler. grep is the pipeline's last
           # command, so its status - not tar's - decides the step on a
           # miss; no -q so the matched path lands in the log.
           tar tzf "$TARBALL" | grep 'ghc-ios/bin/aarch64-apple-ios-ghc$'
           SHA256=$(sha256sum "$TARBALL" | cut -d' ' -f1)
           {
-            echo "GHC 9.8.4 cross-compiler for aarch64-apple-ios."
+            echo "GHC 9.14.1 cross-compiler for aarch64-apple-ios."
             echo
             echo "Built by run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "Commit: ${GITHUB_SHA}"
@@ -394,5 +429,5 @@ jobs:
           gh release create "$TAG" "$TARBALL" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "$TAG - GHC 9.8.4 for aarch64-apple-ios" \
+            --title "$TAG - GHC 9.14.1 for aarch64-apple-ios" \
             --notes-file release-notes.md
